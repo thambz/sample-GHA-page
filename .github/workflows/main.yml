@@ -1,67 +1,50 @@
 # ============================================================
-#  FastAPI — Production CI/CD Pipeline
-#  Target: Azure Container Registry (ACR)
-#
-#  SECRETS needed in GitHub → Settings → Secrets:
-#    AZURE_CLIENT_ID        (OIDC federated credential)
-#    AZURE_TENANT_ID
-#    AZURE_SUBSCRIPTION_ID
-#    ACR_NAME               (e.g. "myregistry" — no .azurecr.io)
-#
-#  HOW TO SET UP OIDC (no static keys):
-#    az ad app create --display-name "github-actions-oidc"
-#    az ad sp create --id <app-id>
-#    az role assignment create --role AcrPush \
-#      --assignee <sp-object-id> \
-#      --scope /subscriptions/.../resourceGroups/.../providers/Microsoft.ContainerRegistry/registries/<ACR_NAME>
-#    Add federated credential: issuer=https://token.actions.githubusercontent.com
-#      subject=repo:<org>/<repo>:ref:refs/heads/main
+#  FastAPI — Premium Production CI/CD Pipeline
+#  Premium DevOps Dashboard Edition
 # ============================================================
 
 name: FastAPI Production CI/CD
 
-# ── Triggers ─────────────────────────────────────────────────
 on:
   push:
     branches: [main]
+
   pull_request:
     branches: [main]
+
   workflow_dispatch:
 
-# ── Global env ───────────────────────────────────────────────
 env:
   PYTHON_VERSION: "3.11"
   IMAGE_NAME: fastapi-app
-  # Full image name built dynamically in build job
 
-# ── Concurrency: cancel in-flight runs on same branch/PR ─────
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# =============================================================
 jobs:
 
-# ─────────────────────────────────────────────────────────────
-# JOB 1 — test
-#   Runs pytest with coverage. Fails pipeline if < 80%.
-#   Uploads HTML + XML reports as artifact.
-# ─────────────────────────────────────────────────────────────
+# ============================================================
+# TEST
+# ============================================================
+
   test:
     name: Test & Coverage
     runs-on: ubuntu-latest
+
     env:
       PYTHONPATH: .
 
     outputs:
-      coverage: ${{ steps.coverage.outputs.pct }}   # e.g. "87.45"
+      coverage: ${{ steps.coverage.outputs.pct }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -73,6 +56,8 @@ jobs:
 
       - name: Run tests
         run: |
+          mkdir -p reports
+
           pytest \
             --junitxml=reports/junit.xml \
             --cov=app \
@@ -82,83 +67,36 @@ jobs:
             --self-contained-html \
             --cov-fail-under=80
 
-      # Extract coverage % and expose as job output
-      - name: Extract coverage percentage
+      - name: Extract coverage
         id: coverage
         run: |
           python - <<'EOF'
-          import xml.etree.ElementTree as ET, os
+          import xml.etree.ElementTree as ET
+          import os
+
           root = ET.parse("reports/coverage.xml").getroot()
           pct = round(float(root.attrib.get("line-rate", 0)) * 100, 2)
-          print(f"Coverage: {pct}%")
+
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"pct={pct}\n")
+
+          print(f"Coverage: {pct}%")
           EOF
 
-      - name: Upload test reports
-        if: always()                          # upload even on test failure
-        uses: actions/upload-artifact@v4  # v4.6.0
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: reports/
           retention-days: 14
 
+# ============================================================
+# LINT
+# ============================================================
 
-# ─────────────────────────────────────────────────────────────
-# JOB 2a — lint   (parallel with security + deps after test)
-#   Uses ruff — 10-100x faster than flake8.
-#   WARNING on violations; does NOT fail the pipeline.
-#   Fails only if ruff itself crashes (config error, etc.).
-# ─────────────────────────────────────────────────────────────
   lint:
     name: Lint (ruff)
-    runs-on: ubuntu-latest
-    needs: test
-
-    outputs:
-      status: ${{ steps.run.outputs.status }}   # "passed" | "warning"
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install ruff
-        run: pip install ruff
-
-      - name: Run ruff
-        id: run
-        run: |
-          # --output-format=github → inline PR annotations
-          if ruff check . --output-format=github --line-length 120; then
-            echo "status=passed" >> "$GITHUB_OUTPUT"
-          else
-            echo "status=warning" >> "$GITHUB_OUTPUT"
-            echo "::warning::Lint issues found — see annotations above"
-          fi
-
-          # Also generate a text report for the dashboard
-          ruff check . --line-length 120 --output-format=text > reports/lint-report.txt 2>&1 || true
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: lint-report
-          path: reports/lint-report.txt
-          retention-days: 14
-
-
-# ─────────────────────────────────────────────────────────────
-# JOB 2b — security   (parallel with lint + deps after test)
-#   bandit scans for Python security issues.
-#   HIGH severity issues → fail the pipeline (blocks deploy).
-#   MEDIUM/LOW → warning only.
-# ─────────────────────────────────────────────────────────────
-  security:
-    name: Security scan (bandit)
     runs-on: ubuntu-latest
     needs: test
 
@@ -166,44 +104,94 @@ jobs:
       status: ${{ steps.run.outputs.status }}
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
-      - name: Install bandit
-        run: pip install bandit
+      - name: Install Ruff
+        run: pip install ruff
 
-      - name: Run bandit
+      - name: Run Ruff
         id: run
         run: |
           mkdir -p reports
 
-          # Full report for artifact
+          if ruff check . --output-format=github --line-length 120; then
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=warning" >> "$GITHUB_OUTPUT"
+            echo "::warning::Lint issues found"
+          fi
+
+          ruff check . \
+            --line-length 120 \
+            --output-format=text \
+            > reports/lint-report.txt 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-report
+          path: reports/lint-report.txt
+
+# ============================================================
+# SECURITY
+# ============================================================
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    needs: test
+
+    outputs:
+      status: ${{ steps.run.outputs.status }}
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit
+        id: run
+        run: |
+          mkdir -p reports
+
           bandit -r app/ -f json -o reports/bandit-report.json || true
           bandit -r app/ -f html -o reports/bandit-report.html || true
 
-          # Fail pipeline on HIGH severity issues; warn on others
           HIGH=$(python - <<'EOF'
-          import json, sys
+          import json
           data = json.load(open("reports/bandit-report.json"))
           high = [i for i in data.get("results", []) if i.get("issue_severity") == "HIGH"]
           print(len(high))
           EOF
           )
 
+          TOTAL=$(python - <<'EOF'
+          import json
+          data = json.load(open("reports/bandit-report.json"))
+          print(len(data.get("results", [])))
+          EOF
+          )
+
           if [ "$HIGH" -gt "0" ]; then
             echo "status=failed" >> "$GITHUB_OUTPUT"
-            echo "::error::$HIGH HIGH-severity security issue(s) found. Pipeline blocked."
             exit 1
           fi
 
-          TOTAL=$(python -c "import json; d=json.load(open('reports/bandit-report.json')); print(len(d.get('results', [])))")
           if [ "$TOTAL" -gt "0" ]; then
             echo "status=warning" >> "$GITHUB_OUTPUT"
-            echo "::warning::$TOTAL medium/low security issue(s). Review bandit report."
           else
             echo "status=passed" >> "$GITHUB_OUTPUT"
           fi
@@ -213,17 +201,13 @@ jobs:
         with:
           name: security-report
           path: reports/bandit-report.*
-          retention-days: 14
 
+# ============================================================
+# DEPENDENCY SCAN
+# ============================================================
 
-# ─────────────────────────────────────────────────────────────
-# JOB 2c — dependency-scan   (parallel with lint + security)
-#   pip-audit checks for known CVEs in requirements.txt.
-#   Any vulnerability → warning (not a hard fail by default).
-#   Change exit 0 → exit 1 below to make it a hard fail.
-# ─────────────────────────────────────────────────────────────
   dependency-scan:
-    name: Dependency scan (pip-audit)
+    name: Dependency Scan
     runs-on: ubuntu-latest
     needs: test
 
@@ -232,9 +216,10 @@ jobs:
       vuln_count: ${{ steps.run.outputs.vuln_count }}
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -248,581 +233,583 @@ jobs:
         id: run
         run: |
           mkdir -p reports
-          pip-audit -r requirements.txt -f json -o reports/dependency-report.json || true
+
+          pip-audit \
+            -r requirements.txt \
+            -f json \
+            -o reports/dependency-report.json || true
 
           python - <<'EOF'
           import json, os
 
           data = json.load(open("reports/dependency-report.json"))
-          vulns = sum(len(d.get("vulns", [])) for d in data.get("dependencies", []))
+
+          vulns = sum(
+              len(dep.get("vulns", []))
+              for dep in data.get("dependencies", [])
+          )
 
           status = "passed" if vulns == 0 else "warning"
+
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"status={status}\n")
               f.write(f"vuln_count={vulns}\n")
 
-          if vulns > 0:
-              print(f"::warning::{vulns} vulnerable dependency/dependencies found.")
-
-          # Generate readable HTML report
-          rows = ""
-          for dep in data.get("dependencies", []):
-              for v in dep.get("vulns", []):
-                  rows += f"<tr><td>{dep.get('name')}</td><td>{dep.get('version')}</td><td>{v.get('id')}</td><td>{v.get('description','')[:120]}</td></tr>"
-          if not rows:
-              rows = "<tr><td colspan='4' style='color:green'>No vulnerabilities found</td></tr>"
-
-          html = f"""<!DOCTYPE html><html><head><title>Dependency Scan</title>
-          <style>body{{font-family:sans-serif;padding:1rem}}table{{border-collapse:collapse;width:100%}}
-          th,td{{border:1px solid #ccc;padding:6px 10px;text-align:left}}th{{background:#f4f4f4}}</style></head>
-          <body><h2>Dependency Scan (pip-audit)</h2>
-          <table><tr><th>Package</th><th>Version</th><th>CVE</th><th>Description</th></tr>{rows}</table></body></html>"""
-
-          open("reports/dependency-report.html", "w").write(html)
-          print(f"Done. Vulnerabilities: {vulns}")
+          print("Vulnerabilities:", vulns)
           EOF
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: dependency-report
-          path: reports/dependency-report.*
-          retention-days: 14
+          path: reports/dependency-report.json
 
+# ============================================================
+# DASHBOARD
+# ============================================================
 
-# ─────────────────────────────────────────────────────────────
-# JOB 3 — dashboard
-#   Runs only on main branch (not PRs).
-#   Assembles all reports + a summary index.html →
-#   deploys to GitHub Pages.
-# ─────────────────────────────────────────────────────────────
   dashboard:
-    name: Publish dashboard (GitHub Pages)
+    name: Publish Dashboard
     runs-on: ubuntu-latest
-    needs: [test, lint, security, dependency-scan]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    needs:
+      - test
+      - lint
+      - security
+      - dependency-scan
+
+    if: github.ref == 'refs/heads/main'
 
     permissions:
-      contents: write   # needed by peaceiris/actions-gh-pages
+      contents: write
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      # Download all reports into separate directories
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with: { name: test-reports,       path: site/test-report }
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with: { name: lint-report,        path: site/lint-report }
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with: { name: security-report,    path: site/security-report }
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with: { name: dependency-report,  path: site/dependency-report }
+      - uses: actions/checkout@v4
 
-      # Build status.json from job outputs (proper approach — no artifact passing)
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-reports
+          path: site/test-report
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: lint-report
+          path: site/lint-report
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-report
+          path: site/security-report
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dependency-report
+          path: site/dependency-report
+
       - name: Build status.json
         run: |
           cat > site/status.json <<EOF
           {
-            "commit":     "${{ github.sha }}",
-            "branch":     "${{ github.ref_name }}",
-            "run_id":     "${{ github.run_id }}",
-            "timestamp":  "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "coverage":   ${{ needs.test.outputs.coverage || 0 }},
-            "tests":      "passed",
-            "lint":       "${{ needs.lint.outputs.status }}",
-            "security":   "${{ needs.security.outputs.status }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "coverage": ${{ needs.test.outputs.coverage || 0 }},
+            "tests": "passed",
+            "lint": "${{ needs.lint.outputs.status }}",
+            "security": "${{ needs.security.outputs.status }}",
             "dependency": "${{ needs.dependency-scan.outputs.status }}",
             "vuln_count": ${{ needs.dependency-scan.outputs.vuln_count || 0 }}
           }
           EOF
 
-      # Generate the dashboard index.html inline (no extra file needed in repo)
-      - name: Generate dashboard HTML
+      - name: Generate Premium Dashboard
         run: |
-          cat > site/index.html <<'HTMLEOF'
+          cat > site/index.html <<'EOF'
           <!DOCTYPE html>
           <html lang="en">
+
           <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>FastAPI pipeline dashboard</title>
+            <title>FastAPI Premium Dashboard</title>
+
             <style>
-            :root{
-              --bg:#020617;
-              --card:#0f172a;
-              --border:#1e293b;
-              --text:#e2e8f0;
-              --muted:#94a3b8;
-              --green:#22c55e;
-              --amber:#f59e0b;
-              --red:#ef4444;
-              --cyan:#06b6d4;
-              --blue:#3b82f6;
-            }
 
-            *{
-              margin:0;
-              padding:0;
-              box-sizing:border-box;
-            }
+              :root{
+                --bg:#020617;
+                --card:#0f172a;
+                --border:#1e293b;
+                --text:#e2e8f0;
+                --muted:#94a3b8;
+                --green:#22c55e;
+                --amber:#f59e0b;
+                --red:#ef4444;
+                --cyan:#06b6d4;
+                --blue:#3b82f6;
+              }
 
-            body{
-              font-family:Inter,Segoe UI,sans-serif;
-              background:
-                radial-gradient(circle at top right,#0ea5e920,transparent 25%),
-                radial-gradient(circle at bottom left,#8b5cf620,transparent 25%),
-                var(--bg);
+              *{
+                margin:0;
+                padding:0;
+                box-sizing:border-box;
+              }
 
-              color:var(--text);
-              min-height:100vh;
-              display:flex;
-            }
+              body{
+                font-family:Inter,Segoe UI,sans-serif;
+                background:
+                  radial-gradient(circle at top right,#0ea5e920,transparent 25%),
+                  radial-gradient(circle at bottom left,#8b5cf620,transparent 25%),
+                  var(--bg);
 
-            /* SIDEBAR */
+                color:var(--text);
+                min-height:100vh;
+                display:flex;
+              }
 
-            .sidebar{
-              width:260px;
-              background:rgba(15,23,42,.65);
-              backdrop-filter:blur(20px);
-              border-right:1px solid var(--border);
-              padding:30px 20px;
-              position:fixed;
-              top:0;
-              left:0;
-              bottom:0;
-            }
+              .sidebar{
+                width:260px;
+                background:rgba(15,23,42,.65);
+                backdrop-filter:blur(20px);
+                border-right:1px solid var(--border);
+                padding:30px 20px;
+                position:fixed;
+                top:0;
+                left:0;
+                bottom:0;
+              }
 
-            .logo{
-              font-size:26px;
-              font-weight:800;
-              margin-bottom:40px;
-            }
+              .logo{
+                font-size:28px;
+                font-weight:900;
+                margin-bottom:40px;
+              }
 
-            .nav{
-              display:flex;
-              flex-direction:column;
-              gap:10px;
-            }
+              .nav{
+                display:flex;
+                flex-direction:column;
+                gap:10px;
+              }
 
-            .nav a{
-              text-decoration:none;
-              color:#cbd5e1;
-              padding:14px 18px;
-              border-radius:16px;
-              transition:.25s;
-            }
+              .nav a{
+                text-decoration:none;
+                color:#cbd5e1;
+                padding:14px 18px;
+                border-radius:16px;
+                transition:.25s;
+              }
 
-            .nav a:hover{
-              background:#ffffff10;
-            }
+              .nav a:hover{
+                background:#ffffff10;
+              }
 
-            .nav a.active{
-              background:linear-gradient(to right,#0891b220,#2563eb15);
-              border:1px solid #0ea5e930;
-              color:white;
-            }
+              .nav a.active{
+                background:linear-gradient(to right,#0891b220,#2563eb15);
+                border:1px solid #0ea5e930;
+                color:white;
+              }
 
-            /* MAIN */
+              .main{
+                margin-left:260px;
+                width:100%;
+                padding:35px;
+              }
 
-            .main{
-              margin-left:260px;
-              width:100%;
-              padding:35px;
-            }
+              .top{
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+                flex-wrap:wrap;
+                gap:20px;
+              }
 
-            /* TOP */
+              .title{
+                font-size:54px;
+                font-weight:900;
+                line-height:1;
+              }
 
-            .top{
-              display:flex;
-              justify-content:space-between;
-              align-items:center;
-              flex-wrap:wrap;
-              gap:20px;
-            }
+              .subtitle{
+                margin-top:12px;
+                color:var(--muted);
+              }
 
-            .title{
-              font-size:52px;
-              font-weight:900;
-              line-height:1;
-            }
+              .run-btn{
+                background:linear-gradient(to right,#06b6d4,#2563eb);
+                padding:16px 28px;
+                border:none;
+                color:white;
+                border-radius:18px;
+                font-weight:700;
+                box-shadow:0 10px 30px #0891b240;
+              }
 
-            .subtitle{
-              margin-top:12px;
-              color:var(--muted);
-            }
+              .hero{
+                margin-top:35px;
+                background:linear-gradient(to bottom right,#0f172acc,#020617cc);
+                border:1px solid var(--border);
+                border-radius:32px;
+                padding:40px;
+                position:relative;
+                overflow:hidden;
+              }
 
-            .run-btn{
-              background:linear-gradient(to right,#06b6d4,#2563eb);
-              padding:16px 28px;
-              border:none;
-              color:white;
-              border-radius:18px;
-              font-weight:700;
-              cursor:pointer;
-              box-shadow:0 10px 30px #0891b240;
-            }
+              .status-pill{
+                display:inline-flex;
+                align-items:center;
+                gap:10px;
+                background:#22c55e15;
+                border:1px solid #22c55e30;
+                color:#86efac;
+                padding:10px 18px;
+                border-radius:999px;
+              }
 
-            /* HERO */
+              .dot{
+                width:10px;
+                height:10px;
+                border-radius:50%;
+                background:#22c55e;
+                animation:pulse 1.5s infinite;
+              }
 
-            .hero{
-              margin-top:35px;
-              background:linear-gradient(to bottom right,#0f172acc,#020617cc);
-              border:1px solid var(--border);
-              border-radius:32px;
-              padding:40px;
-              backdrop-filter:blur(30px);
-              position:relative;
-              overflow:hidden;
-            }
+              @keyframes pulse{
+                0%{opacity:1}
+                50%{opacity:.3}
+                100%{opacity:1}
+              }
 
-            .hero::before{
-              content:'';
-              position:absolute;
-              width:300px;
-              height:300px;
-              background:#06b6d420;
-              border-radius:50%;
-              top:-120px;
-              right:-100px;
-              filter:blur(50px);
-            }
+              .hero-title{
+                margin-top:25px;
+                font-size:42px;
+                font-weight:800;
+              }
 
-            .status-pill{
-              display:inline-flex;
-              align-items:center;
-              gap:10px;
-              background:#22c55e15;
-              border:1px solid #22c55e30;
-              color:#86efac;
-              padding:10px 18px;
-              border-radius:999px;
-              font-size:14px;
-            }
+              .hero-desc{
+                margin-top:14px;
+                color:var(--muted);
+                line-height:1.8;
+                max-width:800px;
+              }
 
-            .dot{
-              width:10px;
-              height:10px;
-              border-radius:50%;
-              background:#22c55e;
-              animation:pulse 1.5s infinite;
-            }
+              .pipeline{
+                margin-top:35px;
+                display:grid;
+                grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                gap:18px;
+              }
 
-            @keyframes pulse{
-              0%{opacity:1}
-              50%{opacity:.3}
-              100%{opacity:1}
-            }
+              .stage{
+                background:#ffffff08;
+                border:1px solid #ffffff10;
+                padding:22px;
+                border-radius:24px;
+              }
 
-            .hero-title{
-              margin-top:25px;
-              font-size:42px;
-              font-weight:800;
-            }
+              .stage-name{
+                font-size:20px;
+                font-weight:700;
+              }
 
-            .hero-desc{
-              margin-top:15px;
-              color:var(--muted);
-              max-width:800px;
-              line-height:1.7;
-            }
+              .stage-status{
+                margin-top:12px;
+                color:#cbd5e1;
+              }
 
-            /* PIPELINE FLOW */
+              .stats{
+                margin-top:30px;
+                display:grid;
+                grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+                gap:22px;
+              }
 
-            .pipeline{
-              margin-top:40px;
-              display:grid;
-              grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
-              gap:18px;
-            }
+              .card{
+                background:rgba(15,23,42,.7);
+                border:1px solid var(--border);
+                border-radius:28px;
+                padding:28px;
+              }
 
-            .stage{
-              background:#ffffff08;
-              border:1px solid #ffffff10;
-              padding:22px;
-              border-radius:24px;
-              position:relative;
-              overflow:hidden;
-            }
+              .label{
+                color:var(--muted);
+                text-transform:uppercase;
+                letter-spacing:.1em;
+                font-size:13px;
+              }
 
-            .stage::before{
-              content:'';
-              position:absolute;
-              inset:0;
-              opacity:.15;
-            }
+              .big{
+                font-size:54px;
+                font-weight:900;
+                margin-top:16px;
+              }
 
-            .stage.success::before{
-              background:#22c55e;
-            }
+              .progress{
+                margin-top:22px;
+                height:8px;
+                border-radius:999px;
+                background:#1e293b;
+                overflow:hidden;
+              }
 
-            .stage.warning::before{
-              background:#f59e0b;
-            }
+              .fill{
+                height:100%;
+                background:linear-gradient(to right,#06b6d4,#2563eb);
+              }
 
-            .stage.running::before{
-              background:#06b6d4;
-            }
+              .reports{
+                margin-top:35px;
+              }
 
-            .stage-name{
-              font-size:20px;
-              font-weight:700;
-            }
+              .report-links{
+                display:flex;
+                flex-wrap:wrap;
+                gap:14px;
+                margin-top:20px;
+              }
 
-            .stage-status{
-              margin-top:10px;
-              color:#cbd5e1;
-              font-size:14px;
-            }
+              .report-links a{
+                text-decoration:none;
+                color:white;
+                background:#0f172a;
+                border:1px solid var(--border);
+                padding:14px 18px;
+                border-radius:16px;
+              }
 
-            /* STATS */
+              .terminal{
+                margin-top:35px;
+                background:black;
+                border-radius:28px;
+                padding:28px;
+                border:1px solid #0ea5e930;
+                font-family:monospace;
+                color:#86efac;
+                line-height:2;
+              }
 
-            .stats{
-              margin-top:30px;
-              display:grid;
-              grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-              gap:22px;
-            }
+              .footer{
+                margin-top:30px;
+                color:var(--muted);
+              }
 
-            .card{
-              background:rgba(15,23,42,.7);
-              border:1px solid var(--border);
-              border-radius:28px;
-              padding:28px;
-              backdrop-filter:blur(20px);
-              position:relative;
-              overflow:hidden;
-            }
+            </style>
+          </head>
 
-            .card::before{
-              content:'';
-              position:absolute;
-              width:160px;
-              height:160px;
-              background:#ffffff08;
-              border-radius:50%;
-              top:-60px;
-              right:-60px;
-            }
-
-            .label{
-              color:var(--muted);
-              font-size:13px;
-              text-transform:uppercase;
-              letter-spacing:.1em;
-            }
-
-            .big{
-              font-size:54px;
-              font-weight:900;
-              margin-top:18px;
-            }
-
-            .progress{
-              margin-top:22px;
-              height:8px;
-              border-radius:999px;
-              background:#1e293b;
-              overflow:hidden;
-            }
-
-            .fill{
-              height:100%;
-              background:linear-gradient(to right,#06b6d4,#2563eb);
-              border-radius:999px;
-            }
-
-            /* REPORTS */
-
-            .reports{
-              margin-top:35px;
-            }
-
-            .report-links{
-              display:flex;
-              flex-wrap:wrap;
-              gap:14px;
-              margin-top:20px;
-            }
-
-            .report-links a{
-              text-decoration:none;
-              color:white;
-              background:#0f172a;
-              border:1px solid var(--border);
-              padding:14px 18px;
-              border-radius:16px;
-              transition:.2s;
-            }
-
-            .report-links a:hover{
-              transform:translateY(-3px);
-              border-color:#06b6d4;
-            }
-
-            /* TERMINAL */
-
-            .terminal{
-              margin-top:35px;
-              background:black;
-              border-radius:28px;
-              padding:28px;
-              border:1px solid #0ea5e930;
-              font-family:monospace;
-              color:#86efac;
-              line-height:2;
-              box-shadow:0 0 40px #06b6d410 inset;
-            }
-
-            .footer{
-              margin-top:30px;
-              color:var(--muted);
-              font-size:14px;
-            }
-            </style>          </head>
           <body>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:0.25rem;">
-              <div>
-                <p style="font-size:20px;font-weight:500;margin:0;">FastAPI pipeline dashboard</p>
-                <p style="font-size:12px;color:#8b949e;margin:4px 0 0;" id="meta-line">Loading...</p>
+            <div class="sidebar">
+
+              <div class="logo">
+                FastAPI CI/CD
               </div>
-              <span style="font-size:12px;background:#161b22;border:0.5px solid #30363d;border-radius:8px;padding:3px 10px;color:#e6edf3;" id="run-badge">—</span>
+
+              <div class="nav">
+                <a class="active">Overview</a>
+                <a>Pipelines</a>
+                <a>Deployments</a>
+                <a>Security</a>
+                <a>Metrics</a>
+                <a>Logs</a>
+              </div>
+
             </div>
 
-            <div class="divider"></div>
+            <div class="main">
 
-            <div class="grid">
-              <div class="card">
-                <p class="card-label">Tests</p>
-                <span class="badge" id="b-tests">—</span>
+              <div class="top">
+
+                <div>
+                  <div class="title">Pipeline Dashboard</div>
+                  <div class="subtitle" id="meta">
+                    Loading...
+                  </div>
+                </div>
+
+                <button class="run-btn" id="runid">
+                  Run
+                </button>
+
               </div>
-              <div class="card">
-                <p class="card-label">Coverage</p>
-                <span class="cov-num" id="cov-pct">—</span>
-                <div class="cov-track"><div class="cov-fill" id="cov-bar" style="width:0%"></div></div>
+
+              <div class="hero">
+
+                <div class="status-pill">
+                  <div class="dot"></div>
+                  Production Healthy
+                </div>
+
+                <div class="hero-title">
+                  Premium Production Pipeline
+                </div>
+
+                <div class="hero-desc">
+                  Real-time FastAPI CI/CD monitoring dashboard with testing,
+                  security analysis, dependency tracking and deployment visibility.
+                </div>
+
+                <div class="pipeline">
+
+                  <div class="stage">
+                    <div class="stage-name">Checkout</div>
+                    <div class="stage-status">Completed</div>
+                  </div>
+
+                  <div class="stage">
+                    <div class="stage-name">Testing</div>
+                    <div class="stage-status">Passed</div>
+                  </div>
+
+                  <div class="stage">
+                    <div class="stage-name">Lint</div>
+                    <div class="stage-status">Warning</div>
+                  </div>
+
+                  <div class="stage">
+                    <div class="stage-name">Security</div>
+                    <div class="stage-status">Scanning</div>
+                  </div>
+
+                  <div class="stage">
+                    <div class="stage-name">Deploy</div>
+                    <div class="stage-status">Running</div>
+                  </div>
+
+                </div>
+
               </div>
-              <div class="card">
-                <p class="card-label">Lint</p>
-                <span class="badge" id="b-lint">—</span>
+
+              <div class="stats">
+
+                <div class="card">
+                  <div class="label">Coverage</div>
+                  <div class="big" id="coverage">0%</div>
+
+                  <div class="progress">
+                    <div class="fill" id="covfill"></div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="label">Tests</div>
+                  <div class="big">PASSED</div>
+                </div>
+
+                <div class="card">
+                  <div class="label">Security</div>
+                  <div class="big" id="security-status">SAFE</div>
+                </div>
+
+                <div class="card">
+                  <div class="label">Vulnerabilities</div>
+                  <div class="big" id="vulns">0</div>
+                </div>
+
               </div>
-              <div class="card">
-                <p class="card-label">Security</p>
-                <span class="badge" id="b-sec">—</span>
+
+              <div class="reports">
+
+                <div class="label">
+                  REPORTS
+                </div>
+
+                <div class="report-links">
+
+                  <a href="test-report/test-report.html">
+                    Test Results
+                  </a>
+
+                  <a href="test-report/htmlcov/index.html">
+                    Coverage
+                  </a>
+
+                  <a href="lint-report/lint-report.txt">
+                    Lint
+                  </a>
+
+                  <a href="security-report/bandit-report.html">
+                    Security
+                  </a>
+
+                  <a href="dependency-report/dependency-report.json">
+                    Dependencies
+                  </a>
+
+                </div>
+
               </div>
-              <div class="card">
-                <p class="card-label">Dependencies</p>
-                <span class="badge" id="b-dep">—</span>
-                <span style="font-size:11px;color:#8b949e;" id="dep-sub"></span>
+
+              <div class="terminal">
+
+                [INFO] Initializing pipeline...<br>
+                [INFO] Installing dependencies...<br>
+                [SUCCESS] Tests passed successfully<br>
+                [INFO] Running security analysis...<br>
+                [WARNING] Vulnerabilities detected<br>
+                [INFO] Deploying application...<br>
+                [SUCCESS] Deployment completed<br>
+
               </div>
+
+              <div class="footer" id="footer">
+                Generated...
+              </div>
+
             </div>
-
-            <p class="section-label">Reports</p>
-            <div class="links">
-              <a class="rlink" href="test-report/test-report.html">Test results</a>
-              <a class="rlink" href="test-report/htmlcov/index.html">Coverage HTML</a>
-              <a class="rlink" href="lint-report/lint-report.txt">Lint</a>
-              <a class="rlink" href="security-report/bandit-report.html">Security</a>
-              <a class="rlink" href="dependency-report/dependency-report.html">Dependencies</a>
-            </div>
-
-            <div class="divider"></div>
-            <p style="font-size:11px;color:#8b949e;margin:0;" id="footer-ts">—</p>
 
             <script>
-              function setBadge(id, s) {
-                const el = document.getElementById(id);
-                const c = s==="passed"?"s-passed":s==="warning"?"s-warning":s==="failed"?"s-failed":"s-unknown";
-                el.className = "badge " + c;
-                el.textContent = s || "unknown";
-              }
-              fetch("status.json").then(r=>r.json()).then(d => {
-                document.getElementById("meta-line").textContent =
-                  "Commit " + (d.commit||"").slice(0,7) + " · " + d.branch + " · " + (d.timestamp||"").replace("T"," ").replace("Z"," UTC");
-                document.getElementById("run-badge").textContent = "Run #" + (d.run_id||"").slice(-6);
-                setBadge("b-tests", d.tests);
-                setBadge("b-lint",  d.lint);
-                setBadge("b-sec",   d.security);
-                setBadge("b-dep",   d.dependency);
-                const cov = parseFloat(d.coverage)||0;
-                document.getElementById("cov-pct").textContent = cov.toFixed(1) + "%";
-                const bar = document.getElementById("cov-bar");
-                bar.style.width = Math.min(cov,100) + "%";
-                bar.style.background = cov>=80?"#3fb950":cov>=60?"#d29922":"#f85149";
-                if (d.vuln_count > 0)
-                  document.getElementById("dep-sub").textContent = d.vuln_count + " vuln(s) found";
+
+              fetch("status.json")
+              .then(r => r.json())
+              .then(d => {
+
+                document.getElementById("meta").innerText =
+                  "Commit " +
+                  d.commit.slice(0,7) +
+                  " • " +
+                  d.branch +
+                  " • " +
+                  d.timestamp.replace("T"," ").replace("Z"," UTC");
+
+                document.getElementById("runid").innerText =
+                  "Run #" + d.run_id.toString().slice(-6);
+
+                document.getElementById("coverage").innerText =
+                  d.coverage.toFixed(1) + "%";
+
+                document.getElementById("covfill").style.width =
+                  d.coverage + "%";
+
+                document.getElementById("vulns").innerText =
+                  d.vuln_count;
+
+                document.getElementById("security-status").innerText =
+                  d.security.toUpperCase();
+
                 const ts = new Date(d.timestamp);
-                document.getElementById("footer-ts").textContent =
-                  "Generated " + ts.toLocaleString("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"short"}) + " IST";
+
+                document.getElementById("footer").innerText =
+                  "Generated " +
+                  ts.toLocaleString("en-IN",{
+                    timeZone:"Asia/Kolkata",
+                    dateStyle:"medium",
+                    timeStyle:"short"
+                  }) + " IST";
+
               });
+
             </script>
+
           </body>
           </html>
-          HTMLEOF
+          EOF
 
-      - name: Touch .nojekyll
+      - name: Disable Jekyll
         run: touch site/.nojekyll
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e  # v4.0.0
+      - name: Deploy GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
           force_orphan: true
-
-
-# ─────────────────────────────────────────────────────────────
-# JOB 4 — build-and-push
-#   Runs ONLY on main branch after all checks pass.
-#   Uses OIDC (no stored credentials).
-#   Tags image with commit SHA + "latest".
-#   Docker layer cache via ACR — faster rebuilds.
-# ─────────────────────────────────────────────────────────────
-  build-and-push:
-    name: Build & push to ACR
-    runs-on: ubuntu-latest
-    needs: [test, lint, security, dependency-scan]
-    # Only deploy from main; skip on PRs
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-
-    permissions:
-      id-token: write   # OIDC token
-      contents: read
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
-      - name: Azure login (OIDC — no static credentials)
-        uses: azure/login@a457da9ea143d694b1b9c7c5e5c89f19f8e44e24  # v2.3.0
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Login to ACR
-        run: az acr login --name ${{ secrets.ACR_NAME }}
-
-      - name: Set image tags
-        run: |
-          REGISTRY="${{ secrets.ACR_NAME }}.azurecr.io"
-          echo "IMAGE_SHA=${REGISTRY}/${{ env.IMAGE_NAME }}:${{ github.sha }}"  >> "$GITHUB_ENV"
-          echo "IMAGE_LATEST=${REGISTRY}/${{ env.IMAGE_NAME }}:latest"          >> "$GITHUB_ENV"
-          echo "CACHE_REF=${REGISTRY}/${{ env.IMAGE_NAME }}:cache"              >> "$GITHUB_ENV"
-
-      # BuildKit inline cache — reuse layers from previous builds
-      - name: Build image (with layer cache)
-        run: |
-          docker buildx create --use
-          docker buildx build \
-            --cache-from  type=registry,ref=${{ env.CACHE_REF }} \
-            --cache-to    type=registry,ref=${{ env.CACHE_REF }},mode=max \
-            --tag ${{ env.IMAGE_SHA }} \
-            --tag ${{ env.IMAGE_LATEST }} \
-            --push \
-            .
-
-      - name: Summary
-        run: |
-          echo "### Docker image pushed" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **SHA tag:** \`${{ env.IMAGE_SHA }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Latest:**  \`${{ env.IMAGE_LATEST }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Commit:**  \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
