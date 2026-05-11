@@ -25,7 +25,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main,develop]
+    branches: [main]
   workflow_dispatch:
 
 # ── Global env ───────────────────────────────────────────────
@@ -345,88 +345,117 @@ jobs:
           <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>FastAPI Pipeline Dashboard</title>
+            <title>FastAPI pipeline dashboard</title>
             <style>
               *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
               body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
                      background: #0d1117; color: #e6edf3; min-height: 100vh; padding: 2rem; }
-              h1   { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; }
-              .meta { font-size: 0.8rem; color: #8b949e; margin-bottom: 2rem; }
-              .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-              .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1.25rem; }
-              .card h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em;
-                         color: #8b949e; margin-bottom: 0.5rem; }
-              .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 20px;
-                       font-size: 0.85rem; font-weight: 600; }
-              .passed  { background: #1a4731; color: #3fb950; }
-              .warning { background: #3d2b00; color: #d29922; }
-              .failed  { background: #4a1818; color: #f85149; }
-              .unknown { background: #21262d; color: #8b949e; }
-              .big { font-size: 1.8rem; font-weight: 700; color: #e6edf3; }
-              .links { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-              .btn { background: #21262d; border: 1px solid #30363d; border-radius: 6px;
-                     color: #58a6ff; padding: 0.4rem 0.8rem; font-size: 0.8rem;
-                     text-decoration: none; transition: background .15s; }
-              .btn:hover { background: #30363d; }
+              .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 13px;
+                       font-weight: 500; padding: 4px 10px; border-radius: 20px; width: fit-content; }
+              .badge::before { content: ""; display: inline-block; width: 7px; height: 7px;
+                               border-radius: 50%; flex-shrink: 0; }
+              .s-passed  { background: #1a4731; color: #3fb950; }
+              .s-passed::before  { background: #3fb950; }
+              .s-warning { background: #3d2b00; color: #d29922; }
+              .s-warning::before { background: #d29922; }
+              .s-failed  { background: #4a1818; color: #f85149; }
+              .s-failed::before  { background: #f85149; }
+              .s-unknown { background: #21262d; color: #8b949e; }
+              .s-unknown::before { background: #8b949e; }
+              .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+                      gap: 10px; margin-bottom: 1.5rem; }
+              .card { background: #161b22; border: 0.5px solid #30363d; border-radius: 12px;
+                      padding: 1rem; display: flex; flex-direction: column; gap: 10px; }
+              .card-label { font-size: 11px; font-weight: 500; letter-spacing: .05em;
+                            color: #8b949e; text-transform: uppercase; margin: 0; }
+              .cov-num { font-size: 28px; font-weight: 500; line-height: 1; }
+              .cov-track { height: 5px; background: #30363d; border-radius: 4px; overflow: hidden; }
+              .cov-fill  { height: 100%; border-radius: 4px; transition: width .6s ease; }
+              .divider { height: 0.5px; background: #30363d; margin: 1rem 0; }
+              .links { display: flex; flex-wrap: wrap; gap: 8px; }
+              .rlink { font-size: 12px; color: #58a6ff; background: #161b22;
+                       border: 0.5px solid #30363d; border-radius: 8px;
+                       padding: 5px 12px; text-decoration: none; }
+              .rlink:hover { background: #1c2128; }
+              .section-label { font-size: 11px; font-weight: 500; letter-spacing: .05em;
+                                color: #8b949e; text-transform: uppercase; margin: 0 0 10px; }
             </style>
           </head>
           <body>
-            <h1>FastAPI Pipeline Dashboard</h1>
-            <div class="meta" id="meta">Loading...</div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:0.25rem;">
+              <div>
+                <p style="font-size:20px;font-weight:500;margin:0;">FastAPI pipeline dashboard</p>
+                <p style="font-size:12px;color:#8b949e;margin:4px 0 0;" id="meta-line">Loading...</p>
+              </div>
+              <span style="font-size:12px;background:#161b22;border:0.5px solid #30363d;border-radius:8px;padding:3px 10px;color:#e6edf3;" id="run-badge">—</span>
+            </div>
+
+            <div class="divider"></div>
 
             <div class="grid">
               <div class="card">
-                <h3>Tests</h3>
-                <span class="badge" id="tests-badge">—</span>
+                <p class="card-label">Tests</p>
+                <span class="badge" id="b-tests">—</span>
               </div>
               <div class="card">
-                <h3>Coverage</h3>
-                <span class="big" id="coverage">—</span>
+                <p class="card-label">Coverage</p>
+                <span class="cov-num" id="cov-pct">—</span>
+                <div class="cov-track"><div class="cov-fill" id="cov-bar" style="width:0%"></div></div>
               </div>
               <div class="card">
-                <h3>Lint</h3>
-                <span class="badge" id="lint-badge">—</span>
+                <p class="card-label">Lint</p>
+                <span class="badge" id="b-lint">—</span>
               </div>
               <div class="card">
-                <h3>Security</h3>
-                <span class="badge" id="security-badge">—</span>
+                <p class="card-label">Security</p>
+                <span class="badge" id="b-sec">—</span>
               </div>
               <div class="card">
-                <h3>Dependencies</h3>
-                <span class="badge" id="dep-badge">—</span>
-                <div style="font-size:.75rem;color:#8b949e;margin-top:.3rem" id="dep-sub"></div>
+                <p class="card-label">Dependencies</p>
+                <span class="badge" id="b-dep">—</span>
+                <span style="font-size:11px;color:#8b949e;" id="dep-sub"></span>
               </div>
             </div>
 
-            <h2 style="font-size:1rem;margin-bottom:.75rem;color:#8b949e">Reports</h2>
+            <p class="section-label">Reports</p>
             <div class="links">
-              <a class="btn" href="test-report/test-report.html">Test report</a>
-              <a class="btn" href="test-report/htmlcov/index.html">Coverage HTML</a>
-              <a class="btn" href="lint-report/lint-report.txt">Lint report</a>
-              <a class="btn" href="security-report/bandit-report.html">Security report</a>
-              <a class="btn" href="dependency-report/dependency-report.html">Dependency report</a>
+              <a class="rlink" href="test-report/test-report.html">Test results</a>
+              <a class="rlink" href="test-report/htmlcov/index.html">Coverage HTML</a>
+              <a class="rlink" href="lint-report/lint-report.txt">Lint</a>
+              <a class="rlink" href="security-report/bandit-report.html">Security</a>
+              <a class="rlink" href="dependency-report/dependency-report.html">Dependencies</a>
             </div>
+
+            <div class="divider"></div>
+            <p style="font-size:11px;color:#8b949e;margin:0;" id="footer-ts">—</p>
 
             <script>
-              const cls = s => s === "passed" ? "passed" : s === "warning" ? "warning" : s === "failed" ? "failed" : "unknown";
-              fetch("status.json")
-                .then(r => r.json())
-                .then(d => {
-                  document.getElementById("meta").textContent =
-                    `Commit ${d.commit?.slice(0,7)} · ${d.branch} · ${d.timestamp}`;
-                  const set = (id, val) => {
-                    const el = document.getElementById(id);
-                    el.textContent = val;
-                    el.className = "badge " + cls(val);
-                  };
-                  set("tests-badge",    d.tests);
-                  set("lint-badge",     d.lint);
-                  set("security-badge", d.security);
-                  set("dep-badge",      d.dependency);
-                  document.getElementById("coverage").textContent = d.coverage + "%";
-                  document.getElementById("dep-sub").textContent =
-                    d.vuln_count > 0 ? `${d.vuln_count} vuln(s) found` : "";
-                });
+              function setBadge(id, s) {
+                const el = document.getElementById(id);
+                const c = s==="passed"?"s-passed":s==="warning"?"s-warning":s==="failed"?"s-failed":"s-unknown";
+                el.className = "badge " + c;
+                el.textContent = s || "unknown";
+              }
+              fetch("status.json").then(r=>r.json()).then(d => {
+                document.getElementById("meta-line").textContent =
+                  "Commit " + (d.commit||"").slice(0,7) + " · " + d.branch + " · " + (d.timestamp||"").replace("T"," ").replace("Z"," UTC");
+                document.getElementById("run-badge").textContent = "Run #" + (d.run_id||"").slice(-6);
+                setBadge("b-tests", d.tests);
+                setBadge("b-lint",  d.lint);
+                setBadge("b-sec",   d.security);
+                setBadge("b-dep",   d.dependency);
+                const cov = parseFloat(d.coverage)||0;
+                document.getElementById("cov-pct").textContent = cov.toFixed(1) + "%";
+                const bar = document.getElementById("cov-bar");
+                bar.style.width = Math.min(cov,100) + "%";
+                bar.style.background = cov>=80?"#3fb950":cov>=60?"#d29922":"#f85149";
+                if (d.vuln_count > 0)
+                  document.getElementById("dep-sub").textContent = d.vuln_count + " vuln(s) found";
+                const ts = new Date(d.timestamp);
+                document.getElementById("footer-ts").textContent =
+                  "Generated " + ts.toLocaleString("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"short"}) + " IST";
+              });
             </script>
           </body>
           </html>
