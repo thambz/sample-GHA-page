@@ -1,15 +1,11 @@
 # ============================================================
-# FASTAPI — ENTERPRISE CI/CD PIPELINE + DASHBOARD
+# FastAPI — Premium Production CI/CD Pipeline
+# Enterprise DevOps Dashboard Edition
 # ============================================================
 
-name: FastAPI Enterprise CI/CD
-
-# ============================================================
-# TRIGGERS
-# ============================================================
+name: FastAPI Production CI/CD
 
 on:
-
   push:
     branches:
       - main
@@ -20,32 +16,27 @@ on:
 
   workflow_dispatch:
 
-# ============================================================
-# GLOBAL ENV
-# ============================================================
-
 env:
   PYTHON_VERSION: "3.11"
-
-# ============================================================
-# CONCURRENCY
-# ============================================================
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# ============================================================
-# TESTS + COVERAGE
-# ============================================================
-
 jobs:
+
+# ============================================================
+# TEST
+# ============================================================
 
   test:
 
-    name: Tests & Coverage
+    name: Test & Coverage
 
     runs-on: ubuntu-latest
+
+    env:
+      PYTHONPATH: .
 
     outputs:
       coverage: ${{ steps.coverage.outputs.pct }}
@@ -77,13 +68,14 @@ jobs:
             --cov-report=xml:reports/coverage.xml \
             --cov-report=html:reports/htmlcov \
             --html=reports/test-report.html \
-            --self-contained-html
+            --self-contained-html \
+            --cov-fail-under=80
 
       - name: Extract coverage
         id: coverage
         run: |
 
-          python <<EOF
+          python - <<'EOF'
           import xml.etree.ElementTree as ET
           import os
 
@@ -92,7 +84,12 @@ jobs:
           ).getroot()
 
           pct = round(
-            float(root.attrib["line-rate"]) * 100,
+            float(
+              root.attrib.get(
+                "line-rate",
+                0
+              )
+            ) * 100,
             2
           )
 
@@ -101,16 +98,18 @@ jobs:
             "a"
           ) as f:
 
-            f.write(f"pct={pct}\n")
+              f.write(f"pct={pct}\n")
 
-          print(pct)
+          print(f"Coverage: {pct}%")
           EOF
 
       - name: Upload reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: reports
+          path: reports/
+          retention-days: 14
 
 # ============================================================
 # LINT
@@ -122,8 +121,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    needs: test
+
     outputs:
-      status: ${{ steps.status.outputs.value }}
+      status: ${{ steps.run.outputs.status }}
 
     steps:
 
@@ -132,31 +133,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
       - name: Install Ruff
         run: pip install ruff
 
       - name: Run Ruff
+        id: run
         run: |
 
           mkdir -p reports
 
-          ruff check . \
-            > reports/lint-report.txt \
-            2>&1 || true
+          if ruff check . \
+            --line-length 120 \
+            --output-format=github; then
 
-      - name: Status
-        id: status
-        run: |
+            echo "status=passed" >> "$GITHUB_OUTPUT"
 
-          if grep -q "error" reports/lint-report.txt; then
-            echo "value=warning" >> $GITHUB_OUTPUT
           else
-            echo "value=passed" >> $GITHUB_OUTPUT
+
+            echo "status=warning" >> "$GITHUB_OUTPUT"
+
           fi
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
+          ruff check . \
+            --line-length 120 \
+            --output-format=text \
+            > reports/lint-report.txt 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: lint-report
           path: reports/lint-report.txt
@@ -171,8 +177,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    needs: test
+
     outputs:
-      status: ${{ steps.status.outputs.value }}
+      status: ${{ steps.run.outputs.status }}
 
     steps:
 
@@ -181,60 +189,104 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
       - name: Install Bandit
         run: pip install bandit
 
       - name: Run Bandit
+        id: run
         run: |
 
           mkdir -p reports
 
-          bandit -r app \
+          bandit -r app/ \
             -f json \
             -o reports/bandit-report.json || true
 
-      - name: Status
-        id: status
-        run: |
+          bandit -r app/ \
+            -f html \
+            -o reports/bandit-report.html || true
 
-          COUNT=$(python <<EOF
+          HIGH=$(python - <<'EOF'
           import json
 
-          data=json.load(
+          data = json.load(
             open(
               "reports/bandit-report.json"
             )
           )
 
-          print(len(data.get("results",[])))
+          high = [
+            i for i in data.get(
+              "results",
+              []
+            )
+
+            if i.get(
+              "issue_severity"
+            ) == "HIGH"
+          ]
+
+          print(len(high))
           EOF
           )
 
-          if [ "$COUNT" -gt "0" ]; then
-            echo "value=warning" >> $GITHUB_OUTPUT
+          TOTAL=$(python - <<'EOF'
+          import json
+
+          data = json.load(
+            open(
+              "reports/bandit-report.json"
+            )
+          )
+
+          print(
+            len(
+              data.get(
+                "results",
+                []
+              )
+            )
+          )
+          EOF
+          )
+
+          if [ "$HIGH" -gt "0" ]; then
+
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+
+          elif [ "$TOTAL" -gt "0" ]; then
+
+            echo "status=warning" >> "$GITHUB_OUTPUT"
+
           else
-            echo "value=passed" >> $GITHUB_OUTPUT
+
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+
           fi
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: security-report
-          path: reports/bandit-report.json
+          path: reports/bandit-report.*
 
 # ============================================================
 # DEPENDENCY SCAN
 # ============================================================
 
-  dependency:
+  dependency-scan:
 
     name: Dependency Scan
 
     runs-on: ubuntu-latest
 
+    needs: test
+
     outputs:
-      vulns: ${{ steps.count.outputs.total }}
+      status: ${{ steps.run.outputs.status }}
+      vuln_count: ${{ steps.run.outputs.vuln_count }}
 
     steps:
 
@@ -243,13 +295,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
-      - name: Install
+      - name: Install pip-audit
         run: |
           pip install -r requirements.txt
           pip install pip-audit
 
-      - name: Scan dependencies
+      - name: Run pip-audit
+        id: run
         run: |
 
           mkdir -p reports
@@ -259,45 +313,45 @@ jobs:
             -f json \
             -o reports/dependency-report.json || true
 
-      - name: Count vulns
-        id: count
-        run: |
+          python - <<'EOF'
 
-          python <<EOF
           import json
           import os
 
-          data=json.load(
+          data = json.load(
             open(
               "reports/dependency-report.json"
             )
           )
 
-          total=0
-
-          for d in data.get(
-            "dependencies",
-            []
-          ):
-
-            total += len(
-              d.get("vulns",[])
+          vulns = sum(
+            len(dep.get("vulns", []))
+            for dep in data.get(
+              "dependencies",
+              []
             )
+          )
+
+          status = (
+            "passed"
+            if vulns == 0
+            else "warning"
+          )
 
           with open(
             os.environ["GITHUB_OUTPUT"],
             "a"
           ) as f:
 
-            f.write(
-              f"total={total}\n"
-            )
+              f.write(f"status={status}\n")
+              f.write(f"vuln_count={vulns}\n")
 
-          print(total)
+          print("Vulnerabilities:", vulns)
+
           EOF
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: dependency-report
           path: reports/dependency-report.json
@@ -316,7 +370,9 @@ jobs:
       - test
       - lint
       - security
-      - dependency
+      - dependency-scan
+
+    if: github.ref == 'refs/heads/main'
 
     permissions:
       contents: write
@@ -324,10 +380,6 @@ jobs:
     steps:
 
       - uses: actions/checkout@v4
-
-      # ======================================================
-      # DOWNLOAD ARTIFACTS
-      # ======================================================
 
       - uses: actions/download-artifact@v4
         with:
@@ -349,9 +401,9 @@ jobs:
           name: dependency-report
           path: site/dependency-report
 
-      # ======================================================
-      # STATUS.JSON
-      # ======================================================
+# ============================================================
+# STATUS.JSON
+# ============================================================
 
       - name: Build status.json
         run: |
@@ -360,25 +412,31 @@ jobs:
 
           cat > site/status.json <<EOF
           {
-            "commit":"${{ github.sha }}",
-            "branch":"${{ github.ref_name }}",
-            "run_id":"${{ github.run_id }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
 
-            "coverage":"${{ needs.test.outputs.coverage }}",
+            "coverage": ${{ needs.test.outputs.coverage || 0 }},
 
-            "lint":"${{ needs.lint.outputs.status }}",
+            "tests": "passed",
 
-            "security":"${{ needs.security.outputs.status }}",
+            "lint": "${{ needs.lint.outputs.status }}",
 
-            "dependency":"${{ needs.dependency.outputs.vulns }}"
+            "security": "${{ needs.security.outputs.status }}",
+
+            "dependency": "${{ needs.dependency-scan.outputs.status }}",
+
+            "vuln_count":
+              ${{ needs.dependency-scan.outputs.vuln_count || 0 }}
           }
           EOF
 
-      # ======================================================
-      # DASHBOARD
-      # ======================================================
+# ============================================================
+# DASHBOARD HTML
+# ============================================================
 
-      - name: Generate dashboard
+      - name: Generate Premium Dashboard
         run: |
 
           cat > site/index.html <<'EOF'
@@ -388,592 +446,754 @@ jobs:
 
           <head>
 
-            <meta charset="UTF-8" />
+          <meta charset="UTF-8">
 
-            <meta
-              name="viewport"
-              content="width=device-width, initial-scale=1.0"
-            />
+          <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0"
+          />
 
-            <title>
-              FastAPI CI/CD Dashboard
-            </title>
+          <title>
+            FastAPI Premium Dashboard
+          </title>
 
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-            <link
-              rel="preconnect"
-              href="https://fonts.googleapis.com"
-            >
+          <link
+            rel="preconnect"
+            href="https://fonts.googleapis.com"
+          />
 
-            <link
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-              rel="stylesheet"
-            >
+          <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+            rel="stylesheet"
+          />
 
-            <style>
+          <style>
 
-              :root{
+          :root{
 
-                --bg:#030712;
-                --panel:#0f172a;
-                --border:#1e293b;
+            --bg:#020617;
+            --card:#0f172a;
+            --border:#1e293b;
 
-                --text:#f8fafc;
-                --muted:#94a3b8;
+            --text:#f8fafc;
+            --muted:#94a3b8;
 
-                --green:#22c55e;
-                --amber:#f59e0b;
-                --red:#ef4444;
-                --blue:#3b82f6;
-              }
+            --green:#22c55e;
+            --amber:#f59e0b;
+            --red:#ef4444;
+            --blue:#2563eb;
+          }
 
-              *{
-                margin:0;
-                padding:0;
-                box-sizing:border-box;
-              }
+          *{
+            margin:0;
+            padding:0;
+            box-sizing:border-box;
+          }
 
-              body{
+          body{
 
-                font-family:'Inter',sans-serif;
+            font-family:'Inter',sans-serif;
 
-                background:
-                radial-gradient(circle at top right,#0ea5e920,transparent 25%),
-                radial-gradient(circle at bottom left,#8b5cf620,transparent 25%),
-                var(--bg);
+            background:
+            radial-gradient(circle at top right,#0ea5e920,transparent 25%),
+            radial-gradient(circle at bottom left,#8b5cf620,transparent 25%),
+            var(--bg);
 
-                color:var(--text);
+            color:var(--text);
 
-                overflow-x:hidden;
-              }
+            overflow-x:hidden;
+          }
 
-              /* SIDEBAR */
+          /* SIDEBAR */
 
-              .sidebar{
+          .sidebar{
 
-                width:280px;
+            width:290px;
 
-                position:fixed;
+            position:fixed;
 
-                top:0;
-                left:0;
-                bottom:0;
+            top:0;
+            left:0;
+            bottom:0;
 
-                background:#020817;
+            background:rgba(2,6,23,.96);
 
-                border-right:1px solid var(--border);
+            border-right:1px solid var(--border);
 
-                padding:18px;
+            padding:24px;
 
-                overflow-y:auto;
-              }
+            overflow-y:auto;
+          }
 
-              .logo{
+          .logo{
 
-                display:flex;
-                align-items:center;
-                gap:12px;
+            display:flex;
+            align-items:center;
+            gap:14px;
 
-                font-size:28px;
-                font-weight:800;
+            font-size:36px;
+            font-weight:900;
 
-                margin-bottom:28px;
-              }
+            margin-bottom:34px;
+          }
 
-              .nav{
+          .logo span{
+            color:#3b82f6;
+          }
 
-                margin-bottom:28px;
-              }
+          .nav-item{
 
-              .nav-item{
+            display:flex;
+            align-items:center;
+            gap:14px;
 
-                display:flex;
-                align-items:center;
-                gap:12px;
+            padding:16px 18px;
 
-                padding:14px 16px;
+            border-radius:18px;
 
-                border-radius:14px;
+            margin-bottom:12px;
 
-                margin-bottom:8px;
+            background:linear-gradient(
+              to right,
+              #0f172a,
+              #111827
+            );
 
-                color:#dbeafe;
+            border:1px solid #1e293b;
 
-                background:#ffffff05;
-              }
+            font-weight:600;
+          }
 
-              .section-title{
+          .section{
 
-                color:#64748b;
+            margin-top:34px;
+          }
 
-                font-size:12px;
+          .section-title{
 
-                letter-spacing:.12em;
+            color:#64748b;
 
-                margin:24px 0 16px;
-              }
+            font-size:12px;
 
-              .report-item{
+            letter-spacing:.16em;
 
-                display:flex;
-                justify-content:space-between;
-                align-items:center;
+            margin-bottom:16px;
+          }
 
-                padding:14px 10px;
+          .report{
 
-                border-radius:12px;
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
 
-                transition:.25s;
+            padding:14px 12px;
 
-                cursor:pointer;
+            border-radius:14px;
 
-                text-decoration:none;
+            margin-bottom:10px;
 
-                color:#e2e8f0;
-              }
+            transition:.25s;
 
-              .report-item:hover{
-                background:#ffffff06;
-              }
+            cursor:pointer;
 
-              .report-left{
+            text-decoration:none;
 
-                display:flex;
-                align-items:center;
-                gap:12px;
-              }
+            color:white;
+          }
 
-              .pill{
+          .report:hover{
+            background:#ffffff08;
+          }
 
-                padding:5px 10px;
+          .report-left{
 
-                border-radius:999px;
+            display:flex;
+            align-items:center;
+            gap:12px;
+          }
 
-                font-size:12px;
-                font-weight:700;
-              }
+          .pill{
 
-              .green{
-                background:#14532d;
-                color:#4ade80;
-              }
+            padding:6px 12px;
 
-              .blue{
-                background:#172554;
-                color:#60a5fa;
-              }
+            border-radius:999px;
 
-              .amber{
-                background:#78350f;
-                color:#fbbf24;
-              }
+            font-size:12px;
+            font-weight:700;
+          }
 
-              .gray{
-                background:#3f3f46;
-                color:#facc15;
-              }
+          .green{
+            background:#14532d;
+            color:#4ade80;
+          }
 
-              .quick-link{
+          .blue{
+            background:#172554;
+            color:#60a5fa;
+          }
 
-                display:flex;
-                justify-content:space-between;
-                align-items:center;
+          .amber{
+            background:#78350f;
+            color:#fbbf24;
+          }
 
-                padding:14px 10px;
+          .gray{
+            background:#3f3f46;
+            color:#facc15;
+          }
 
-                border-radius:12px;
+          .quick{
 
-                color:#e2e8f0;
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
 
-                text-decoration:none;
-              }
+            padding:14px 12px;
 
-              .quick-link:hover{
-                background:#ffffff06;
-              }
+            border-radius:14px;
 
-              .footer{
+            text-decoration:none;
 
-                margin-top:24px;
+            color:white;
+          }
 
-                border-top:1px solid var(--border);
+          .quick:hover{
+            background:#ffffff08;
+          }
 
-                padding-top:20px;
+          .footer{
 
-                color:#94a3b8;
-              }
+            margin-top:34px;
 
-              .commit-box{
+            border-top:1px solid var(--border);
 
-                margin-top:12px;
+            padding-top:22px;
 
-                background:#111827;
+            color:#94a3b8;
+          }
 
-                padding:10px 12px;
+          .commit{
 
-                border-radius:10px;
+            margin-top:14px;
 
-                font-size:13px;
-              }
+            background:#111827;
 
-              /* MAIN */
+            padding:12px;
 
-              .main{
+            border-radius:12px;
+          }
 
-                margin-left:280px;
+          /* MAIN */
 
-                width:calc(100vw - 280px);
+          .main{
 
-                padding:24px;
-              }
+            margin-left:290px;
 
-              .top{
+            width:calc(100vw - 290px);
 
-                display:flex;
-                justify-content:space-between;
-                align-items:flex-start;
+            padding:28px;
+          }
 
-                gap:20px;
+          .top{
 
-                flex-wrap:wrap;
-              }
+            display:flex;
+            justify-content:space-between;
+            align-items:flex-start;
 
-              .title{
+            gap:20px;
 
-                font-size:42px;
-                font-weight:900;
-              }
+            flex-wrap:wrap;
+          }
 
-              .subtitle{
+          .title{
 
-                margin-top:10px;
+            font-size:56px;
+            font-weight:900;
 
-                color:var(--muted);
+            line-height:1;
+          }
 
-                font-size:16px;
-              }
+          .subtitle{
 
-              .run-btn{
+            margin-top:12px;
 
-                border:none;
+            color:var(--muted);
 
-                background:linear-gradient(
-                  to right,
-                  #2563eb,
-                  #3b82f6
-                );
+            font-size:16px;
+          }
 
-                color:white;
+          .run{
 
-                padding:16px 24px;
+            border:none;
 
-                border-radius:16px;
+            background:linear-gradient(
+              to right,
+              #2563eb,
+              #3b82f6
+            );
 
-                font-weight:700;
+            color:white;
 
-                cursor:pointer;
-              }
+            padding:18px 28px;
 
-              .hero{
+            border-radius:18px;
 
-                margin-top:24px;
+            font-size:18px;
+            font-weight:700;
 
-                background:#071122;
+            box-shadow:0 10px 30px #2563eb40;
+          }
 
-                border:1px solid var(--border);
+          /* HERO */
 
-                border-radius:28px;
+          .hero{
 
-                padding:24px;
-              }
+            margin-top:26px;
 
-              .healthy{
+            background:rgba(15,23,42,.72);
 
-                display:inline-flex;
-                align-items:center;
-                gap:10px;
+            border:1px solid var(--border);
 
-                background:#052e16;
+            border-radius:32px;
 
-                color:#4ade80;
+            padding:30px;
+          }
 
-                padding:10px 16px;
+          .health{
 
-                border-radius:999px;
+            display:inline-flex;
+            align-items:center;
+            gap:10px;
 
-                font-weight:700;
-              }
+            background:#052e16;
 
-              .pipeline{
+            border:1px solid #14532d;
 
-                margin-top:28px;
+            color:#4ade80;
 
-                display:flex;
-                align-items:center;
+            padding:10px 18px;
 
-                gap:14px;
+            border-radius:999px;
 
-                overflow-x:auto;
+            font-weight:700;
+          }
 
-                padding-bottom:10px;
-              }
+          .hero-row{
 
-              .stage{
+            margin-top:20px;
 
-                min-width:180px;
+            display:flex;
+            align-items:flex-start;
+            justify-content:space-between;
 
-                background:#0b1220;
+            gap:24px;
 
-                border:1px solid #1e293b;
+            flex-wrap:wrap;
+          }
 
-                border-radius:22px;
+          .hero-text{
 
-                padding:20px;
+            max-width:650px;
 
-                flex-shrink:0;
-              }
+            line-height:1.7;
 
-              .stage.success{
-                border-color:#14532d;
-              }
+            color:#cbd5e1;
 
-              .stage.warning{
-                border-color:#78350f;
-              }
+            font-size:18px;
+          }
 
-              .stage-title{
+          /* PIPELINE */
 
-                margin-top:16px;
+          .pipeline{
 
-                font-size:22px;
-                font-weight:700;
-              }
+            margin-top:34px;
 
-              .stage-status{
+            display:flex;
+            align-items:center;
 
-                margin-top:8px;
+            gap:16px;
 
-                font-size:15px;
+            overflow-x:auto;
 
-                color:#94a3b8;
-              }
+            padding-bottom:10px;
+          }
 
-              .connector{
+          .stage{
 
-                min-width:40px;
+            min-width:190px;
 
-                height:3px;
+            background:#0b1220;
 
-                background:#334155;
+            border:1px solid #1e293b;
 
-                position:relative;
-              }
+            border-radius:26px;
 
-              .connector::after{
+            padding:22px;
 
-                content:'';
+            text-align:center;
 
-                position:absolute;
+            position:relative;
+          }
 
-                right:-4px;
-                top:-3px;
+          .stage.success{
+            border-color:#14532d;
+          }
 
-                width:10px;
-                height:10px;
+          .stage.warning{
+            border-color:#78350f;
+          }
 
-                border-radius:50%;
+          .icon{
 
-                background:#475569;
-              }
+            width:54px;
+            height:54px;
 
-              /* METRICS */
+            border-radius:50%;
 
-              .metrics{
+            display:flex;
+            align-items:center;
+            justify-content:center;
 
-                margin-top:24px;
+            margin:auto;
 
-                display:grid;
-                grid-template-columns:repeat(5,1fr);
+            font-size:24px;
+            font-weight:900;
+          }
 
-                gap:18px;
-              }
+          .success .icon{
+            background:#14532d;
+            color:#4ade80;
+          }
 
-              .metric{
+          .warning .icon{
+            background:#78350f;
+            color:#fbbf24;
+          }
 
-                background:#071122;
+          .stage-name{
 
-                border:1px solid var(--border);
+            margin-top:18px;
 
-                border-radius:24px;
+            font-size:28px;
+            font-weight:800;
+          }
 
-                padding:22px;
-              }
+          .stage-status{
 
-              .metric-label{
+            margin-top:10px;
 
-                color:#94a3b8;
+            font-size:20px;
+          }
 
-                font-size:13px;
-              }
+          .stage-time{
 
-              .metric-value{
+            margin-top:10px;
 
-                margin-top:14px;
+            color:#94a3b8;
 
-                font-size:42px;
-                font-weight:900;
-              }
+            font-size:14px;
+          }
 
-              .metric-sub{
+          .connector{
 
-                margin-top:10px;
+            min-width:70px;
 
-                color:#cbd5e1;
-              }
+            display:flex;
+            align-items:center;
+            justify-content:center;
 
-              /* BOTTOM */
+            gap:6px;
+          }
 
-              .bottom{
+          .connector div{
 
-                margin-top:24px;
+            width:12px;
+            height:12px;
 
-                display:grid;
+            border-radius:50%;
 
-                grid-template-columns:
-                1.2fr 1fr 1fr;
+            background:#22c55e;
+          }
 
-                gap:20px;
-              }
+          .connector.warn div{
+            background:#fbbf24;
+          }
 
-              .panel{
+          /* METRICS */
 
-                background:#071122;
+          .metrics{
 
-                border:1px solid var(--border);
+            margin-top:24px;
 
-                border-radius:24px;
+            display:grid;
+            grid-template-columns:repeat(5,1fr);
 
-                padding:22px;
-              }
+            gap:18px;
+          }
 
-              .panel-title{
+          .metric{
 
-                font-size:28px;
-                font-weight:800;
+            background:rgba(15,23,42,.72);
 
-                margin-bottom:20px;
-              }
+            border:1px solid var(--border);
 
-              /* TIMELINE */
+            border-radius:28px;
 
-              .timeline{
-                display:flex;
-                flex-direction:column;
-                gap:24px;
-              }
+            padding:24px;
+          }
 
-              .event{
-                display:flex;
-                gap:14px;
-              }
+          .metric-top{
 
-              .event-dot{
+            display:flex;
+            align-items:center;
+            gap:12px;
+          }
 
-                width:14px;
-                height:14px;
+          .metric-icon{
 
-                border-radius:50%;
+            width:46px;
+            height:46px;
 
-                margin-top:6px;
+            border-radius:14px;
 
-                flex-shrink:0;
-              }
+            display:flex;
+            align-items:center;
+            justify-content:center;
 
-              .event-time{
+            font-size:20px;
+          }
 
-                color:#94a3b8;
+          .metric-title{
+            font-size:18px;
+          }
 
-                font-size:13px;
+          .metric-value{
 
-                margin-bottom:6px;
-              }
+            margin-top:22px;
 
-              canvas{
-                max-width:100% !important;
-              }
+            font-size:58px;
+            font-weight:900;
+          }
 
-              /* RESPONSIVE */
+          .metric-sub{
 
-              @media(max-width:1500px){
+            margin-top:10px;
 
-                .metrics{
-                  grid-template-columns:repeat(2,1fr);
-                }
+            color:#cbd5e1;
 
-                .bottom{
-                  grid-template-columns:1fr;
-                }
-              }
+            font-size:18px;
+          }
 
-              @media(max-width:1100px){
+          .metric-progress{
 
-                .sidebar{
-                  position:relative;
-                  width:100%;
-                  height:auto;
-                }
+            margin-top:18px;
 
-                .main{
-                  margin-left:0;
-                  width:100%;
-                }
+            height:8px;
 
-                body{
-                  display:block;
-                }
-              }
+            background:#1e293b;
 
-              @media(max-width:700px){
+            border-radius:999px;
 
-                .metrics{
-                  grid-template-columns:1fr;
-                }
+            overflow:hidden;
+          }
 
-                .title{
-                  font-size:32px;
-                }
-              }
+          .metric-fill{
 
-            </style>
+            height:100%;
+
+            background:linear-gradient(
+              to right,
+              #22c55e,
+              #4ade80
+            );
+
+            width:80%;
+          }
+
+          /* BOTTOM */
+
+          .bottom{
+
+            margin-top:24px;
+
+            display:grid;
+            grid-template-columns:1.2fr 1fr 1fr;
+
+            gap:20px;
+          }
+
+          .panel{
+
+            background:rgba(15,23,42,.72);
+
+            border:1px solid var(--border);
+
+            border-radius:30px;
+
+            padding:24px;
+          }
+
+          .panel-title{
+
+            font-size:34px;
+            font-weight:900;
+
+            margin-bottom:22px;
+          }
+
+          canvas{
+            max-width:100% !important;
+          }
+
+          /* ACTIVITY */
+
+          .timeline{
+            display:flex;
+            flex-direction:column;
+            gap:24px;
+          }
+
+          .event{
+            display:flex;
+            gap:18px;
+          }
+
+          .event-dot{
+
+            width:18px;
+            height:18px;
+
+            border-radius:50%;
+
+            margin-top:8px;
+
+            flex-shrink:0;
+          }
+
+          .event-line{
+
+            width:2px;
+
+            background:#14532d;
+
+            margin-left:8px;
+
+            margin-top:6px;
+          }
+
+          .event-time{
+
+            color:#94a3b8;
+
+            font-size:16px;
+
+            margin-bottom:6px;
+          }
+
+          .event-title{
+
+            font-size:24px;
+            font-weight:700;
+          }
+
+          .event-desc{
+
+            margin-top:8px;
+
+            color:#cbd5e1;
+
+            line-height:1.6;
+          }
+
+          /* FOOT */
+
+          .foot{
+
+            margin-top:24px;
+
+            text-align:center;
+
+            color:#94a3b8;
+
+            font-size:18px;
+          }
+
+          /* RESPONSIVE */
+
+          @media(max-width:1600px){
+
+            .metrics{
+              grid-template-columns:repeat(2,1fr);
+            }
+
+            .bottom{
+              grid-template-columns:1fr;
+            }
+          }
+
+          @media(max-width:1200px){
+
+            .sidebar{
+              position:relative;
+              width:100%;
+              height:auto;
+            }
+
+            .main{
+              margin-left:0;
+              width:100%;
+            }
+          }
+
+          @media(max-width:700px){
+
+            .metrics{
+              grid-template-columns:1fr;
+            }
+
+            .title{
+              font-size:38px;
+            }
+
+            .pipeline{
+              flex-direction:column;
+              align-items:stretch;
+            }
+
+            .connector{
+              display:none;
+            }
+          }
+
+          </style>
 
           </head>
 
           <body>
 
-            <!-- SIDEBAR -->
+          <!-- SIDEBAR -->
 
-            <aside class="sidebar">
+          <div class="sidebar">
 
-              <div class="logo">
-                🚀 FastAPI CI/CD
-              </div>
+            <div class="logo">
+              🚀 <span>FastAPI</span>
+            </div>
 
-              <div class="nav">
+            <div class="nav-item">
+              📊 Overview
+            </div>
 
-                <div class="nav-item">
-                  📊 Overview
-                </div>
-
-              </div>
+            <div class="section">
 
               <div class="section-title">
                 REPORTS
               </div>
 
               <a
-                class="report-item"
-                href="./test-report/test-report.html"
+                class="report"
+                href="test-report/test-report.html"
                 target="_blank"
               >
 
@@ -988,8 +1208,8 @@ jobs:
               </a>
 
               <a
-                class="report-item"
-                href="./test-report/htmlcov/index.html"
+                class="report"
+                href="test-report/htmlcov/index.html"
                 target="_blank"
               >
 
@@ -1004,8 +1224,8 @@ jobs:
               </a>
 
               <a
-                class="report-item"
-                href="./lint-report/lint-report.txt"
+                class="report"
+                href="lint-report/lint-report.txt"
                 target="_blank"
               >
 
@@ -1020,8 +1240,8 @@ jobs:
               </a>
 
               <a
-                class="report-item"
-                href="./security-report/bandit-report.json"
+                class="report"
+                href="security-report/bandit-report.html"
                 target="_blank"
               >
 
@@ -1036,8 +1256,8 @@ jobs:
               </a>
 
               <a
-                class="report-item"
-                href="./dependency-report/dependency-report.json"
+                class="report"
+                href="dependency-report/dependency-report.json"
                 target="_blank"
               >
 
@@ -1045,393 +1265,598 @@ jobs:
                   📦 Dependency Scan
                 </div>
 
-                <div class="pill gray">
+                <div class="pill gray" id="side-vulns">
                   35
                 </div>
 
               </a>
+
+            </div>
+
+            <div class="section">
 
               <div class="section-title">
                 QUICK LINKS
               </div>
 
               <a
-                class="quick-link"
+                class="quick"
                 href="https://github.com"
                 target="_blank"
               >
-                <span>⚙ GitHub Actions</span>
-                ↗
+                ⚙ GitHub Actions ↗
               </a>
 
               <a
-                class="quick-link"
+                class="quick"
                 href="#"
               >
-                <span>🕘 Run History</span>
-                ↗
+                🕘 Run History ↗
               </a>
 
-              <div class="footer">
+            </div>
 
-                <div>
-                  🕘 11 May 2026, 4:46 PM IST
+            <div class="footer">
+
+              <div id="time">
+                Loading...
+              </div>
+
+              <div class="commit" id="commit">
+                commit
+              </div>
+
+            </div>
+
+          </div>
+
+          <!-- MAIN -->
+
+          <div class="main">
+
+            <!-- TOP -->
+
+            <div class="top">
+
+              <div>
+
+                <div class="title">
+                  FastAPI pipeline dashboard
                 </div>
 
-                <div class="commit-box">
-                  2833df5
+                <div class="subtitle" id="meta">
+                  Loading...
                 </div>
 
               </div>
 
-            </aside>
+              <button class="run" id="run">
+                Run
+              </button>
 
-            <!-- MAIN -->
+            </div>
 
-            <main class="main">
+            <!-- HERO -->
 
-              <!-- TOP -->
+            <div class="hero">
 
-              <div class="top">
+              <div class="health">
+                🟢 Pipeline Healthy
+              </div>
 
-                <div>
+              <div class="hero-row">
 
-                  <div class="title">
-                    FastAPI pipeline dashboard
-                  </div>
-
-                  <div class="subtitle">
-                    Commit 2833df5 • main • 11 May 2026, 11:05:24 UTC
-                  </div>
-
+                <div class="hero-text">
+                  Real-time CI/CD visibility with testing,
+                  coverage analysis, security scanning,
+                  dependency monitoring and deployment insights.
                 </div>
-
-                <button class="run-btn">
-                  ▶ Run #290730
-                </button>
 
               </div>
 
-              <!-- HERO -->
+              <!-- PIPELINE -->
 
-              <section class="hero">
+              <div class="pipeline">
 
-                <div class="healthy">
-                  🟢 Pipeline Healthy
-                </div>
+                <div class="stage success">
 
-                <!-- PIPELINE -->
-
-                <div class="pipeline">
-
-                  <div class="stage success">
-
-                    ✔
-
-                    <div class="stage-title">
-                      Checkout
-                    </div>
-
-                    <div class="stage-status">
-                      Completed
-                    </div>
-
+                  <div class="icon">
+                    ✓
                   </div>
 
-                  <div class="connector"></div>
-
-                  <div class="stage success">
-
-                    ✔
-
-                    <div class="stage-title">
-                      Tests
-                    </div>
-
-                    <div class="stage-status">
-                      Passed
-                    </div>
-
+                  <div class="stage-name">
+                    Checkout
                   </div>
 
-                  <div class="connector"></div>
-
-                  <div class="stage success">
-
-                    ✔
-
-                    <div class="stage-title">
-                      Coverage
-                    </div>
-
-                    <div class="stage-status">
-                      80.4%
-                    </div>
-
+                  <div class="stage-status">
+                    Completed
                   </div>
 
-                  <div class="connector"></div>
-
-                  <div class="stage warning">
-
-                    ⚠
-
-                    <div class="stage-title">
-                      Lint
-                    </div>
-
-                    <div class="stage-status">
-                      Warning
-                    </div>
-
-                  </div>
-
-                  <div class="connector"></div>
-
-                  <div class="stage warning">
-
-                    ⚠
-
-                    <div class="stage-title">
-                      Security
-                    </div>
-
-                    <div class="stage-status">
-                      Warning
-                    </div>
-
-                  </div>
-
-                  <div class="connector"></div>
-
-                  <div class="stage warning">
-
-                    ⚠
-
-                    <div class="stage-title">
-                      Dependencies
-                    </div>
-
-                    <div class="stage-status">
-                      35 vulns
-                    </div>
-
+                  <div class="stage-time">
+                    11:05:24
                   </div>
 
                 </div>
 
-              </section>
+                <div class="connector">
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                </div>
 
-              <!-- METRICS -->
+                <div class="stage success">
 
-              <section class="metrics">
+                  <div class="icon">
+                    ✓
+                  </div>
 
-                <div class="metric">
-
-                  <div class="metric-label">
+                  <div class="stage-name">
                     Tests
                   </div>
 
-                  <div class="metric-value">
+                  <div class="stage-status">
                     Passed
                   </div>
 
-                  <div class="metric-sub">
-                    All tests passed successfully
+                  <div class="stage-time">
+                    11:06:02
                   </div>
 
                 </div>
 
-                <div class="metric">
+                <div class="connector">
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                </div>
 
-                  <div class="metric-label">
+                <div class="stage success">
+
+                  <div class="icon">
+                    ✓
+                  </div>
+
+                  <div class="stage-name">
                     Coverage
                   </div>
 
-                  <div class="metric-value">
+                  <div class="stage-status">
                     80.4%
                   </div>
 
-                  <div class="metric-sub">
-                    Target ≥ 80%
+                  <div class="stage-time">
+                    11:06:25
                   </div>
 
                 </div>
 
-                <div class="metric">
+                <div class="connector warn">
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                </div>
 
-                  <div class="metric-label">
+                <div class="stage warning">
+
+                  <div class="icon">
+                    ⚠
+                  </div>
+
+                  <div class="stage-name">
                     Lint
                   </div>
 
-                  <div class="metric-value">
+                  <div class="stage-status">
                     Warning
                   </div>
 
-                  <div class="metric-sub">
-                    Issues found
+                  <div class="stage-time">
+                    11:07:12
                   </div>
 
                 </div>
 
-                <div class="metric">
+                <div class="connector warn">
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                </div>
 
-                  <div class="metric-label">
+                <div class="stage warning">
+
+                  <div class="icon">
+                    ⚠
+                  </div>
+
+                  <div class="stage-name">
                     Security
                   </div>
 
-                  <div class="metric-value">
+                  <div class="stage-status">
                     Warning
                   </div>
 
-                  <div class="metric-sub">
-                    Review scan report
+                  <div class="stage-time">
+                    11:07:58
                   </div>
 
                 </div>
 
-                <div class="metric">
+                <div class="connector warn">
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                </div>
 
-                  <div class="metric-label">
+                <div class="stage warning">
+
+                  <div class="icon">
+                    ⚠
+                  </div>
+
+                  <div class="stage-name">
                     Dependencies
                   </div>
 
-                  <div class="metric-value">
-                    35
+                  <div class="stage-status">
+                    35 vulns
                   </div>
 
-                  <div class="metric-sub">
-                    Total vulnerabilities
+                  <div class="stage-time">
+                    11:09:32
                   </div>
 
                 </div>
 
-              </section>
+              </div>
 
-              <!-- BOTTOM -->
+            </div>
 
-              <section class="bottom">
+            <!-- METRICS -->
 
-                <!-- COVERAGE -->
+            <div class="metrics">
 
-                <div class="panel">
+              <div class="metric">
 
-                  <div class="panel-title">
-                    Coverage Trend
+                <div class="metric-top">
+
+                  <div
+                    class="metric-icon"
+                    style="background:#14532d;color:#4ade80"
+                  >
+                    ✓
                   </div>
 
-                  <canvas
-                    id="coverageChart"
-                    height="140"
-                  ></canvas>
+                  <div class="metric-title">
+                    Tests
+                  </div>
 
                 </div>
 
-                <!-- VULN -->
+                <div class="metric-value">
+                  Passed
+                </div>
 
-                <div class="panel">
+                <div class="metric-sub">
+                  All tests passed successfully
+                </div>
 
-                  <div class="panel-title">
-                    Vulnerabilities by Severity
+              </div>
+
+              <div class="metric">
+
+                <div class="metric-top">
+
+                  <div
+                    class="metric-icon"
+                    style="background:#312e81;color:#a78bfa"
+                  >
+                    ↗
                   </div>
 
-                  <canvas
-                    id="vulnChart"
-                    height="180"
-                  ></canvas>
+                  <div class="metric-title">
+                    Coverage
+                  </div>
 
                 </div>
 
-                <!-- ACTIVITY -->
+                <div
+                  class="metric-value"
+                  id="cov"
+                >
+                  80.4%
+                </div>
 
-                <div class="panel">
+                <div class="metric-sub">
+                  Target: ≥ 80%
+                </div>
 
-                  <div class="panel-title">
-                    Recent Activity
+                <div class="metric-progress">
+                  <div
+                    class="metric-fill"
+                    id="covfill"
+                  ></div>
+                </div>
+
+              </div>
+
+              <div class="metric">
+
+                <div class="metric-top">
+
+                  <div
+                    class="metric-icon"
+                    style="background:#78350f;color:#fbbf24"
+                  >
+                    {}
                   </div>
 
-                  <div class="timeline">
+                  <div class="metric-title">
+                    Lint
+                  </div>
 
-                    <div class="event">
+                </div>
+
+                <div class="metric-value">
+                  Warning
+                </div>
+
+                <div class="metric-sub">
+                  Issues found
+                </div>
+
+              </div>
+
+              <div class="metric">
+
+                <div class="metric-top">
+
+                  <div
+                    class="metric-icon"
+                    style="background:#7f1d1d;color:#f87171"
+                  >
+                    🛡
+                  </div>
+
+                  <div class="metric-title">
+                    Security
+                  </div>
+
+                </div>
+
+                <div class="metric-value">
+                  Warning
+                </div>
+
+                <div class="metric-sub">
+                  See security scan
+                </div>
+
+              </div>
+
+              <div class="metric">
+
+                <div class="metric-top">
+
+                  <div
+                    class="metric-icon"
+                    style="background:#172554;color:#60a5fa"
+                  >
+                    📦
+                  </div>
+
+                  <div class="metric-title">
+                    Dependencies
+                  </div>
+
+                </div>
+
+                <div
+                  class="metric-value"
+                  id="vuln-total"
+                >
+                  35
+                </div>
+
+                <div class="metric-sub">
+                  Total vulnerabilities
+                </div>
+
+              </div>
+
+            </div>
+
+            <!-- BOTTOM -->
+
+            <div class="bottom">
+
+              <!-- COVERAGE -->
+
+              <div class="panel">
+
+                <div class="panel-title">
+                  Coverage Trend
+                </div>
+
+                <canvas
+                  id="coverageChart"
+                  height="180"
+                ></canvas>
+
+              </div>
+
+              <!-- DONUT -->
+
+              <div class="panel">
+
+                <div class="panel-title">
+                  Vulnerabilities by Severity
+                </div>
+
+                <canvas
+                  id="vulnChart"
+                  height="180"
+                ></canvas>
+
+              </div>
+
+              <!-- ACTIVITY -->
+
+              <div class="panel">
+
+                <div class="panel-title">
+                  Recent Activity
+                </div>
+
+                <div class="timeline">
+
+                  <div class="event">
+
+                    <div>
 
                       <div
                         class="event-dot"
                         style="background:#22c55e"
                       ></div>
 
-                      <div>
+                      <div class="event-line"></div>
 
-                        <div class="event-time">
-                          11:05:24
-                        </div>
+                    </div>
 
-                        <div>
-                          Pipeline started
-                        </div>
+                    <div>
 
+                      <div class="event-time">
+                        11:05:24
+                      </div>
+
+                      <div class="event-title">
+                        Pipeline started
+                      </div>
+
+                      <div class="event-desc">
+                        GitHub Actions workflow triggered
                       </div>
 
                     </div>
 
-                    <div class="event">
+                  </div>
+
+                  <div class="event">
+
+                    <div>
 
                       <div
                         class="event-dot"
                         style="background:#22c55e"
                       ></div>
 
-                      <div>
+                      <div class="event-line"></div>
 
-                        <div class="event-time">
-                          11:06:02
-                        </div>
+                    </div>
 
-                        <div>
-                          Tests passed
-                        </div>
+                    <div>
 
+                      <div class="event-time">
+                        11:06:02
+                      </div>
+
+                      <div class="event-title">
+                        Tests passed
+                      </div>
+
+                      <div class="event-desc">
+                        All tests completed successfully
                       </div>
 
                     </div>
 
-                    <div class="event">
+                  </div>
+
+                  <div class="event">
+
+                    <div>
+
+                      <div
+                        class="event-dot"
+                        style="background:#22c55e"
+                      ></div>
+
+                      <div class="event-line"></div>
+
+                    </div>
+
+                    <div>
+
+                      <div class="event-time">
+                        11:06:25
+                      </div>
+
+                      <div class="event-title">
+                        Coverage generated
+                      </div>
+
+                      <div class="event-desc">
+                        Coverage: 80.4%
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                  <div class="event">
+
+                    <div>
 
                       <div
                         class="event-dot"
                         style="background:#f59e0b"
                       ></div>
 
-                      <div>
+                      <div class="event-line"></div>
 
-                        <div class="event-time">
-                          11:07:12
-                        </div>
+                    </div>
 
-                        <div>
-                          Lint warnings detected
-                        </div>
+                    <div>
 
+                      <div class="event-time">
+                        11:07:12
+                      </div>
+
+                      <div class="event-title">
+                        Lint warnings detected
+                      </div>
+
+                      <div class="event-desc">
+                        Check lint report for details
                       </div>
 
                     </div>
 
-                    <div class="event">
+                  </div>
+
+                  <div class="event">
+
+                    <div>
 
                       <div
                         class="event-dot"
                         style="background:#f59e0b"
                       ></div>
 
-                      <div>
+                    </div>
 
-                        <div class="event-time">
-                          11:07:58
-                        </div>
+                    <div>
 
-                        <div>
-                          Security scan completed
-                        </div>
+                      <div class="event-time">
+                        11:09:32
+                      </div>
 
+                      <div class="event-title">
+                        Dependency scan completed
+                      </div>
+
+                      <div class="event-desc">
+                        35 vulnerabilities found
                       </div>
 
                     </div>
@@ -1440,155 +1865,261 @@ jobs:
 
                 </div>
 
-              </section>
+              </div>
 
-            </main>
+            </div>
 
-            <!-- CHARTS -->
+            <!-- FOOT -->
 
-            <script>
+            <div
+              class="foot"
+              id="foot"
+            >
+              Loading...
+            </div>
 
-              // COVERAGE
+          </div>
 
-              new Chart(
-                document.getElementById(
-                  'coverageChart'
-                ),
+          <!-- CHARTS -->
+
+          <script>
+
+          fetch("status.json")
+          .then(r => r.json())
+          .then(d => {
+
+            document.getElementById(
+              "meta"
+            ).innerText =
+
+              "Commit " +
+              d.commit.slice(0,7) +
+              " • " +
+              d.branch +
+              " • " +
+              d.timestamp
+                .replace("T"," ")
+                .replace("Z"," UTC");
+
+            document.getElementById(
+              "run"
+            ).innerText =
+
+              "▶ Run #" +
+              d.run_id.toString().slice(-6);
+
+            document.getElementById(
+              "cov"
+            ).innerText =
+
+              d.coverage.toFixed(1) + "%";
+
+            document.getElementById(
+              "covfill"
+            ).style.width =
+
+              d.coverage + "%";
+
+            document.getElementById(
+              "vuln-total"
+            ).innerText =
+
+              d.vuln_count;
+
+            document.getElementById(
+              "side-vulns"
+            ).innerText =
+
+              d.vuln_count;
+
+            const ts = new Date(d.timestamp);
+
+            document.getElementById(
+              "time"
+            ).innerText =
+
+              ts.toLocaleString(
+                "en-IN",
                 {
-                  type:'line',
+                  timeZone:"Asia/Kolkata",
+                  dateStyle:"medium",
+                  timeStyle:"short"
+                }
+              ) + " IST";
 
-                  data:{
-                    labels:[
-                      '05 May',
-                      '06 May',
-                      '07 May',
-                      '08 May',
-                      '09 May',
-                      '10 May',
-                      '11 May'
-                    ],
+            document.getElementById(
+              "commit"
+            ).innerText =
 
-                    datasets:[{
-                      data:[
-                        74,
-                        75,
-                        78,
-                        77,
-                        82,
-                        89,
-                        80
-                      ],
+              d.commit.slice(0,7);
 
-                      borderColor:'#22c55e',
+            document.getElementById(
+              "foot"
+            ).innerHTML =
 
-                      backgroundColor:
-                      'rgba(34,197,94,.15)',
+              "FastAPI CI/CD Dashboard &nbsp; • &nbsp; " +
+              "Built with ❤️ using GitHub Actions &nbsp; • &nbsp; " +
+              "Deployed via GitHub Pages";
 
-                      tension:.4,
+          });
 
-                      fill:true
-                    }]
+          /* COVERAGE CHART */
+
+          new Chart(
+            document.getElementById(
+              "coverageChart"
+            ),
+            {
+
+              type:"line",
+
+              data:{
+
+                labels:[
+                  "05 May",
+                  "06 May",
+                  "07 May",
+                  "08 May",
+                  "09 May",
+                  "10 May",
+                  "11 May"
+                ],
+
+                datasets:[{
+
+                  label:"Coverage %",
+
+                  data:[
+                    73,
+                    75,
+                    77,
+                    75,
+                    82,
+                    89,
+                    81
+                  ],
+
+                  borderColor:"#22c55e",
+
+                  backgroundColor:
+                    "rgba(34,197,94,.15)",
+
+                  fill:true,
+
+                  tension:.4
+                }]
+              },
+
+              options:{
+
+                plugins:{
+                  legend:{
+                    labels:{
+                      color:"#e2e8f0"
+                    }
+                  }
+                },
+
+                scales:{
+
+                  x:{
+                    ticks:{color:"#cbd5e1"},
+                    grid:{color:"#1e293b"}
                   },
 
-                  options:{
-
-                    plugins:{
-                      legend:{display:false}
+                  y:{
+                    ticks:{
+                      color:"#cbd5e1"
                     },
 
-                    scales:{
-
-                      x:{
-                        ticks:{color:'#94a3b8'},
-                        grid:{color:'#1e293b'}
-                      },
-
-                      y:{
-                        ticks:{color:'#94a3b8'},
-                        grid:{color:'#1e293b'}
-                      }
+                    grid:{
+                      color:"#1e293b"
                     }
                   }
                 }
-              );
+              }
+            }
+          );
 
-              // DONUT
+          /* DONUT */
 
-              new Chart(
-                document.getElementById(
-                  'vulnChart'
-                ),
-                {
-                  type:'doughnut',
+          new Chart(
+            document.getElementById(
+              "vulnChart"
+            ),
+            {
 
-                  data:{
+              type:"doughnut",
 
-                    labels:[
-                      'Critical - 4',
-                      'High - 12',
-                      'Medium - 28',
-                      'Low - 42'
-                    ],
+              data:{
 
-                    datasets:[{
+                labels:[
+                  "Critical",
+                  "High",
+                  "Medium",
+                  "Low"
+                ],
 
-                      data:[
-                        4,
-                        12,
-                        28,
-                        42
-                      ],
+                datasets:[{
 
-                      backgroundColor:[
-                        '#ef4444',
-                        '#f97316',
-                        '#fbbf24',
-                        '#2563eb'
-                      ],
+                  data:[
+                    4,
+                    12,
+                    28,
+                    42
+                  ],
 
-                      borderWidth:0
-                    }]
-                  },
+                  backgroundColor:[
+                    "#ef4444",
+                    "#f97316",
+                    "#fbbf24",
+                    "#2563eb"
+                  ],
 
-                  options:{
+                  borderWidth:0
+                }]
+              },
 
-                    cutout:'72%',
+              options:{
 
-                    plugins:{
+                cutout:"72%",
 
-                      legend:{
+                plugins:{
 
-                        position:'top',
+                  legend:{
 
-                        labels:{
-                          color:'#e2e8f0'
-                        }
-                      }
+                    position:"top",
+
+                    labels:{
+                      color:"#f8fafc"
                     }
                   }
                 }
-              );
+              }
+            }
+          );
 
-            </script>
+          </script>
 
           </body>
           </html>
 
           EOF
 
-      # ======================================================
-      # NO JEKYLL
-      # ======================================================
+# ============================================================
+# NO JEKYLL
+# ============================================================
 
       - name: Disable Jekyll
         run: touch site/.nojekyll
 
-      # ======================================================
-      # DEPLOY
-      # ======================================================
+# ============================================================
+# DEPLOY
+# ============================================================
 
-      - name: Deploy
+      - name: Deploy GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
+          force_orphan: true
