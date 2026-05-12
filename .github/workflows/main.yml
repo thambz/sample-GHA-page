@@ -1,16 +1,12 @@
 # ============================================================
-# FastAPI — Premium Production CI/CD Pipeline
-# Enterprise Observability Dashboard Edition
+# FastAPI Production CI/CD Pipeline
+# Premium Observability Dashboard
 # ============================================================
 
 name: FastAPI Production CI/CD
 
 on:
   push:
-    branches:
-      - main
-
-  pull_request:
     branches:
       - main
 
@@ -32,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      coverage: ${{ steps.coverage.outputs.pct }}
+      coverage: ${{ steps.coverage.outputs.value }}
 
     steps:
 
@@ -67,7 +63,7 @@ jobs:
         id: coverage
         run: |
 
-          python - <<EOF
+          python <<EOF
           import xml.etree.ElementTree as ET
           import os
 
@@ -90,14 +86,13 @@ jobs:
             "a"
           ) as f:
 
-              f.write(
-                f"pct={pct}\n"
-              )
+            f.write(
+              f"value={pct}\n"
+            )
 
-          print(pct)
           EOF
 
-      - name: Upload reports
+      - name: Upload test reports
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
@@ -114,7 +109,7 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      status: ${{ steps.status.outputs.value }}
+      status: ${{ steps.result.outputs.value }}
 
     steps:
 
@@ -136,8 +131,8 @@ jobs:
             > reports/lint-report.txt \
             2>&1 || true
 
-      - name: Status
-        id: status
+      - name: Lint status
+        id: result
         run: |
 
           if grep -q "error" reports/lint-report.txt; then
@@ -166,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      status: ${{ steps.status.outputs.value }}
+      status: ${{ steps.result.outputs.value }}
 
     steps:
 
@@ -188,8 +183,8 @@ jobs:
             -f json \
             -o reports/bandit-report.json || true
 
-      - name: Status
-        id: status
+      - name: Security status
+        id: result
         run: |
 
           COUNT=$(python <<EOF
@@ -238,7 +233,7 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      vulns: ${{ steps.count.outputs.total }}
+      vulns: ${{ steps.vuln.outputs.count }}
 
     steps:
 
@@ -253,7 +248,7 @@ jobs:
           pip install -r requirements.txt
           pip install pip-audit
 
-      - name: Scan dependencies
+      - name: Run dependency scan
         run: |
 
           mkdir -p reports
@@ -264,7 +259,7 @@ jobs:
             -o reports/dependency-report.json || true
 
       - name: Count vulns
-        id: count
+        id: vuln
         run: |
 
           python <<EOF
@@ -298,10 +293,8 @@ jobs:
           ) as f:
 
             f.write(
-              f"total={total}\n"
+              f"count={total}\n"
             )
-
-          print(total)
 
           EOF
 
@@ -354,1022 +347,930 @@ jobs:
           path: site/dependency-report
 
 # ============================================================
-# DASHBOARD HTML
+# GENERATE DASHBOARD
 # ============================================================
 
-      - name: Generate Dashboard
+      - name: Generate dashboard
         run: |
 
           cat > site/index.html <<'EOF'
 
-          <!DOCTYPE html>
-          <html lang="en">
+            <!DOCTYPE html>
+            <html lang="en">
 
-          <head>
+            <head>
 
-          <meta charset="UTF-8"/>
+            <meta charset="UTF-8">
 
-          <meta
-            name="viewport"
-            content="width=device-width, initial-scale=1.0"
-          />
+            <meta
+              name="viewport"
+              content="width=device-width, initial-scale=1.0"
+            />
 
-          <title>
+            <title>
             FastAPI Dashboard
-          </title>
+            </title>
 
-          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-          <link
+            <link
             href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
             rel="stylesheet"
-          />
+            />
 
-          <style>
+            <style>
 
-          :root{
+            :root{
 
-            --bg:#020617;
-            --card:#0f172a;
-            --border:#1e293b;
+              --bg:#020617;
+              --card:#0f172a;
+              --border:#1e293b;
 
-            --text:#f8fafc;
-            --muted:#94a3b8;
+              --text:#f8fafc;
+              --muted:#94a3b8;
 
-            --green:#22c55e;
-            --amber:#fbbf24;
-            --blue:#2563eb;
-          }
-
-          *{
-            margin:0;
-            padding:0;
-            box-sizing:border-box;
-          }
-
-          body{
-
-            font-family:'Inter',sans-serif;
-
-            background:
-            radial-gradient(circle at top right,#0ea5e920,transparent 25%),
-            radial-gradient(circle at bottom left,#8b5cf620,transparent 25%),
-            var(--bg);
-
-            color:var(--text);
-
-            overflow-x:hidden;
-          }
-
-          /* SIDEBAR */
-
-          .sidebar{
-
-            position:fixed;
-
-            top:0;
-            left:0;
-            bottom:0;
-
-            width:220px;
-
-            background:#020817;
-
-            border-right:1px solid var(--border);
-
-            padding:14px;
-          }
-
-          .logo{
-
-            display:flex;
-            align-items:center;
-            gap:10px;
-
-            font-size:22px;
-            font-weight:900;
-
-            margin-bottom:22px;
-          }
-
-          .logo span{
-            color:#3b82f6;
-          }
-
-          .nav{
-
-            display:flex;
-            flex-direction:column;
-
-            gap:10px;
-          }
-
-          .nav-item{
-
-            display:flex;
-            align-items:center;
-            gap:12px;
-
-            padding:12px 14px;
-
-            border-radius:14px;
-
-            background:#111827;
-
-            border:1px solid #1e293b;
-
-            font-size:14px;
-            font-weight:600;
-          }
-
-          .section{
-
-            margin-top:24px;
-          }
-
-          .section-title{
-
-            color:#64748b;
-
-            font-size:11px;
-
-            letter-spacing:.16em;
-
-            margin-bottom:12px;
-          }
-
-          .report{
-
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-
-            padding:12px 10px;
-
-            border-radius:12px;
-
-            margin-bottom:8px;
-
-            text-decoration:none;
-
-            color:white;
-
-            font-size:13px;
-          }
-
-          .report:hover{
-            background:#ffffff08;
-          }
-
-          .pill{
-
-            padding:4px 10px;
-
-            border-radius:999px;
-
-            font-size:11px;
-            font-weight:700;
-          }
-
-          .green{
-            background:#14532d;
-            color:#4ade80;
-          }
-
-          .blue{
-            background:#172554;
-            color:#60a5fa;
-          }
-
-          .amber{
-            background:#78350f;
-            color:#fbbf24;
-          }
-
-          .gray{
-            background:#3f3f46;
-            color:#facc15;
-          }
-
-          /* MAIN */
-
-          .main{
-
-            margin-left:220px;
-
-            width:calc(100vw - 220px);
-
-            padding:20px;
-          }
-
-          .top{
-
-            display:flex;
-            justify-content:space-between;
-            align-items:flex-start;
-          }
-
-          .title{
-
-            font-size:32px;
-            font-weight:900;
-          }
-
-          .subtitle{
-
-            margin-top:8px;
-
-            color:var(--muted);
-
-            font-size:13px;
-          }
-
-          .run{
-
-            border:none;
-
-            background:linear-gradient(
-              to right,
-              #2563eb,
-              #3b82f6
-            );
-
-            color:white;
-
-            padding:12px 20px;
-
-            border-radius:14px;
-
-            font-size:13px;
-            font-weight:700;
-          }
-
-          /* HERO */
-
-          .hero{
-
-            margin-top:22px;
-
-            background:rgba(15,23,42,.72);
-
-            border:1px solid var(--border);
-
-            border-radius:24px;
-
-            padding:22px;
-          }
-
-          .health{
-
-            display:inline-flex;
-            align-items:center;
-            gap:8px;
-
-            background:#052e16;
-
-            color:#4ade80;
-
-            padding:8px 14px;
-
-            border-radius:999px;
-
-            font-size:13px;
-            font-weight:700;
-          }
-
-          .hero-text{
-
-            margin-top:18px;
-
-            max-width:720px;
-
-            line-height:1.8;
-
-            color:#cbd5e1;
-
-            font-size:14px;
-          }
-
-          /* PIPELINE */
-
-          .pipeline{
-
-            margin-top:26px;
-
-            display:grid;
-
-            grid-template-columns:
-            repeat(11,auto);
-
-            align-items:center;
-
-            gap:12px;
-          }
-
-          .stage{
-
-            width:160px;
-
-            background:#0b1220;
-
-            border:1px solid #1e293b;
-
-            border-radius:20px;
-
-            padding:18px;
-
-            text-align:center;
-          }
-
-          .success{
-            border-color:#14532d;
-          }
-
-          .warning{
-            border-color:#78350f;
-          }
-
-          .icon{
-
-            width:42px;
-            height:42px;
-
-            border-radius:50%;
-
-            display:flex;
-            align-items:center;
-            justify-content:center;
-
-            margin:auto;
-
-            font-size:18px;
-            font-weight:900;
-          }
-
-          .success .icon{
-            background:#14532d;
-            color:#4ade80;
-          }
-
-          .warning .icon{
-            background:#78350f;
-            color:#fbbf24;
-          }
-
-          .stage-name{
-
-            margin-top:12px;
-
-            font-size:16px;
-            font-weight:800;
-          }
-
-          .stage-status{
-
-            margin-top:8px;
-
-            font-size:13px;
-          }
-
-          .stage-time{
-
-            margin-top:6px;
-
-            color:#94a3b8;
-
-            font-size:11px;
-          }
-
-          .connector{
-
-            display:flex;
-            gap:4px;
-          }
-
-          .connector div{
-
-            width:8px;
-            height:8px;
-
-            border-radius:50%;
-
-            background:#22c55e;
-          }
-
-          .connector.warn div{
-            background:#fbbf24;
-          }
-
-          /* METRICS */
-
-          .metrics{
-
-            margin-top:18px;
-
-            display:grid;
-
-            grid-template-columns:
-            repeat(5,1fr);
-
-            gap:14px;
-          }
-
-          .metric{
-
-            background:rgba(15,23,42,.72);
-
-            border:1px solid var(--border);
-
-            border-radius:20px;
-
-            padding:18px;
-          }
-
-          .metric-title{
-
-            font-size:14px;
-          }
-
-          .metric-value{
-
-            margin-top:14px;
-
-            font-size:28px;
-            font-weight:900;
-          }
-
-          .metric-sub{
-
-            margin-top:10px;
-
-            color:#cbd5e1;
-
-            font-size:12px;
-          }
-
-          .metric-progress{
-
-            margin-top:12px;
-
-            height:6px;
-
-            background:#1e293b;
-
-            border-radius:999px;
-
-            overflow:hidden;
-          }
-
-          .metric-fill{
-
-            width:80%;
-
-            height:100%;
-
-            background:linear-gradient(
-              to right,
-              #22c55e,
-              #4ade80
-            );
-          }
-
-          /* BOTTOM */
-
-          .bottom{
-
-            margin-top:18px;
-
-            display:grid;
-
-            grid-template-columns:
-            1.2fr 1fr 1fr;
-
-            gap:16px;
-          }
-
-          .panel{
-
-            background:rgba(15,23,42,.72);
-
-            border:1px solid var(--border);
-
-            border-radius:22px;
-
-            padding:18px;
-          }
-
-          .panel-title{
-
-            font-size:20px;
-            font-weight:800;
-
-            margin-bottom:18px;
-          }
-
-          /* TIMELINE */
-
-          .timeline{
-            display:flex;
-            flex-direction:column;
-            gap:18px;
-          }
-
-          .event{
-            display:flex;
-            gap:12px;
-          }
-
-          .event-dot{
-
-            width:12px;
-            height:12px;
-
-            border-radius:50%;
-
-            background:#22c55e;
-
-            margin-top:5px;
-          }
-
-          .event-time{
-
-            color:#94a3b8;
-
-            font-size:11px;
-
-            margin-bottom:4px;
-          }
-
-          .event-title{
-
-            font-size:15px;
-            font-weight:700;
-          }
-
-          .event-desc{
-
-            margin-top:4px;
-
-            color:#cbd5e1;
-
-            font-size:12px;
-          }
-
-          footer{
-
-            margin-top:20px;
-
-            text-align:center;
-
-            color:#94a3b8;
-
-            font-size:13px;
-          }
-
-          canvas{
-            max-width:100%;
-          }
-
-          /* RESPONSIVE */
-
-          @media(max-width:1500px){
-
-            .metrics{
-              grid-template-columns:repeat(2,1fr);
+              --green:#22c55e;
+              --amber:#fbbf24;
+              --blue:#2563eb;
             }
 
-            .bottom{
-              grid-template-columns:1fr;
+            *{
+              margin:0;
+              padding:0;
+              box-sizing:border-box;
             }
 
-            .pipeline{
-              overflow-x:auto;
-              padding-bottom:10px;
-            }
-          }
+            body{
 
-          @media(max-width:1100px){
+              font-family:'Inter',sans-serif;
+
+              background:
+              radial-gradient(circle at top right,#0ea5e920,transparent 25%),
+              radial-gradient(circle at bottom left,#8b5cf620,transparent 25%),
+              var(--bg);
+
+              color:var(--text);
+
+              overflow-x:hidden;
+            }
+
+            /* =========================================================
+            SIDEBAR
+            ========================================================= */
 
             .sidebar{
-              position:relative;
-              width:100%;
+
+              position:fixed;
+
+              top:0;
+              left:0;
+              bottom:0;
+
+              width:220px;
+
+              background:#020817;
+
+              border-right:1px solid var(--border);
+
+              padding:18px;
             }
+
+            .logo{
+
+              display:flex;
+              align-items:center;
+              gap:10px;
+
+              font-size:22px;
+              font-weight:900;
+
+              margin-bottom:22px;
+            }
+
+            .logo span{
+              color:#3b82f6;
+            }
+
+            .nav-item{
+
+              display:flex;
+              align-items:center;
+              gap:12px;
+
+              padding:14px;
+
+              border-radius:14px;
+
+              background:#111827;
+
+              border:1px solid #1e293b;
+
+              margin-bottom:12px;
+
+              font-size:14px;
+              font-weight:600;
+            }
+
+            .section{
+
+              margin-top:24px;
+            }
+
+            .section-title{
+
+              color:#64748b;
+
+              font-size:11px;
+
+              letter-spacing:.16em;
+
+              margin-bottom:12px;
+            }
+
+            .report{
+
+              display:flex;
+              justify-content:space-between;
+              align-items:center;
+
+              padding:12px 10px;
+
+              border-radius:12px;
+
+              margin-bottom:10px;
+
+              text-decoration:none;
+
+              color:white;
+
+              font-size:13px;
+            }
+
+            .report:hover{
+              background:#ffffff08;
+            }
+
+            .pill{
+
+              padding:4px 10px;
+
+              border-radius:999px;
+
+              font-size:11px;
+              font-weight:700;
+            }
+
+            .green{
+              background:#14532d;
+              color:#4ade80;
+            }
+
+            .blue{
+              background:#172554;
+              color:#60a5fa;
+            }
+
+            .amber{
+              background:#78350f;
+              color:#fbbf24;
+            }
+
+            .gray{
+              background:#3f3f46;
+              color:#facc15;
+            }
+
+            /* =========================================================
+            MAIN
+            ========================================================= */
 
             .main{
-              margin-left:0;
-              width:100%;
-            }
-          }
 
-          @media(max-width:700px){
+              margin-left:220px;
+
+              width:calc(100vw - 220px);
+
+              padding:20px;
+            }
+
+            .top{
+
+              display:flex;
+              justify-content:space-between;
+              align-items:flex-start;
+            }
+
+            .title{
+
+              font-size:32px;
+              font-weight:900;
+            }
+
+            .subtitle{
+
+              margin-top:8px;
+
+              color:var(--muted);
+
+              font-size:13px;
+            }
+
+            .run{
+
+              border:none;
+
+              background:linear-gradient(
+                to right,
+                #2563eb,
+                #3b82f6
+              );
+
+              color:white;
+
+              padding:12px 20px;
+
+              border-radius:14px;
+
+              font-size:13px;
+              font-weight:700;
+            }
+
+            /* =========================================================
+            HERO
+            ========================================================= */
+
+            .hero{
+
+              margin-top:22px;
+
+              background:rgba(15,23,42,.72);
+
+              border:1px solid var(--border);
+
+              border-radius:24px;
+
+              padding:22px;
+            }
+
+            .health{
+
+              display:inline-flex;
+              align-items:center;
+              gap:8px;
+
+              background:#052e16;
+
+              color:#4ade80;
+
+              padding:8px 14px;
+
+              border-radius:999px;
+
+              font-size:13px;
+              font-weight:700;
+            }
+
+            .hero-text{
+
+              margin-top:18px;
+
+              max-width:720px;
+
+              line-height:1.8;
+
+              color:#cbd5e1;
+
+              font-size:14px;
+            }
+
+            /* =========================================================
+            PIPELINE
+            ========================================================= */
+
+            .pipeline{
+
+              margin-top:26px;
+
+              display:flex;
+
+              align-items:center;
+
+              justify-content:space-between;
+
+              gap:10px;
+
+              width:100%;
+
+              overflow:hidden;
+            }
+
+            .stage{
+
+              flex:1;
+
+              min-width:0;
+
+              background:#0b1220;
+
+              border:1px solid #1e293b;
+
+              border-radius:20px;
+
+              padding:16px 12px;
+
+              text-align:center;
+            }
+
+            .success{
+              border-color:#14532d;
+            }
+
+            .warning{
+              border-color:#78350f;
+            }
+
+            .icon{
+
+              width:38px;
+              height:38px;
+
+              border-radius:50%;
+
+              display:flex;
+              align-items:center;
+              justify-content:center;
+
+              margin:auto;
+
+              font-size:16px;
+              font-weight:900;
+            }
+
+            .success .icon{
+              background:#14532d;
+              color:#4ade80;
+            }
+
+            .warning .icon{
+              background:#78350f;
+              color:#fbbf24;
+            }
+
+            .stage-name{
+
+              margin-top:10px;
+
+              font-size:15px;
+              font-weight:800;
+            }
+
+            .stage-status{
+
+              margin-top:6px;
+
+              font-size:12px;
+            }
+
+            .stage-time{
+
+              margin-top:5px;
+
+              color:#94a3b8;
+
+              font-size:10px;
+            }
+
+            .connector{
+
+              display:flex;
+
+              align-items:center;
+
+              justify-content:center;
+
+              gap:4px;
+
+              min-width:36px;
+            }
+
+            .connector div{
+
+              width:7px;
+              height:7px;
+
+              border-radius:50%;
+
+              background:#22c55e;
+            }
+
+            .connector.warn div{
+              background:#fbbf24;
+            }
+
+            /* =========================================================
+            METRICS
+            ========================================================= */
 
             .metrics{
-              grid-template-columns:1fr;
+
+              margin-top:18px;
+
+              display:grid;
+
+              grid-template-columns:
+              repeat(5,1fr);
+
+              gap:14px;
             }
-          }
 
-          </style>
+            .metric{
 
-          </head>
+              background:rgba(15,23,42,.72);
 
-          <body>
+              border:1px solid var(--border);
 
-          <!-- SIDEBAR -->
+              border-radius:20px;
 
-          <div class="sidebar">
+              padding:18px;
+            }
 
-            <div class="logo">
-              ⚡ <span>FastAPI</span>
-            </div>
+            .metric-title{
+              font-size:14px;
+            }
 
-            <div class="nav">
+            .metric-value{
+
+              margin-top:14px;
+
+              font-size:28px;
+              font-weight:900;
+            }
+
+            .metric-sub{
+
+              margin-top:10px;
+
+              color:#cbd5e1;
+
+              font-size:12px;
+            }
+
+            .metric-progress{
+
+              margin-top:12px;
+
+              height:6px;
+
+              background:#1e293b;
+
+              border-radius:999px;
+
+              overflow:hidden;
+            }
+
+            .metric-fill{
+
+              width:80%;
+
+              height:100%;
+
+              background:linear-gradient(
+                to right,
+                #22c55e,
+                #4ade80
+              );
+            }
+
+            /* =========================================================
+            BOTTOM SECTION
+            ========================================================= */
+
+            .bottom{
+
+              margin-top:18px;
+
+              display:grid;
+
+              grid-template-columns:
+              1.2fr 1fr 1fr;
+
+              gap:16px;
+            }
+
+            .panel{
+
+              background:rgba(15,23,42,.72);
+
+              border:1px solid var(--border);
+
+              border-radius:22px;
+
+              padding:18px;
+            }
+
+            .panel-title{
+
+              font-size:20px;
+              font-weight:800;
+
+              margin-bottom:18px;
+            }
+
+            /* =========================================================
+            TIMELINE
+            ========================================================= */
+
+            .timeline{
+              display:flex;
+              flex-direction:column;
+              gap:18px;
+            }
+
+            .event{
+              display:flex;
+              gap:12px;
+            }
+
+            .event-dot{
+
+              width:12px;
+              height:12px;
+
+              border-radius:50%;
+
+              background:#22c55e;
+
+              margin-top:5px;
+            }
+
+            .event-time{
+
+              color:#94a3b8;
+
+              font-size:11px;
+
+              margin-bottom:4px;
+            }
+
+            .event-title{
+
+              font-size:15px;
+              font-weight:700;
+            }
+
+            .event-desc{
+
+              margin-top:4px;
+
+              color:#cbd5e1;
+
+              font-size:12px;
+            }
+
+            footer{
+
+              margin-top:20px;
+
+              text-align:center;
+
+              color:#94a3b8;
+
+              font-size:13px;
+            }
+
+            canvas{
+              max-width:100%;
+            }
+
+            /* =========================================================
+            RESPONSIVE
+            ========================================================= */
+
+            @media(max-width:1500px){
+
+              .metrics{
+                grid-template-columns:repeat(2,1fr);
+              }
+
+              .bottom{
+                grid-template-columns:1fr;
+              }
+            }
+
+            @media(max-width:1100px){
+
+              .sidebar{
+                position:relative;
+                width:100%;
+              }
+
+              .main{
+                margin-left:0;
+                width:100%;
+              }
+
+              .pipeline{
+                overflow-x:auto;
+                padding-bottom:8px;
+              }
+
+              .stage{
+                min-width:140px;
+              }
+            }
+
+            @media(max-width:700px){
+
+              .metrics{
+                grid-template-columns:1fr;
+              }
+            }
+
+            </style>
+
+            </head>
+
+            <body>
+
+            <!-- =========================================================
+            SIDEBAR
+            ========================================================= -->
+
+            <div class="sidebar">
+
+              <div class="logo">
+                🚀 <span>FastAPI</span>
+              </div>
 
               <div class="nav-item">
                 📊 Overview
               </div>
 
-              <div class="nav-item">
-                ☰ Pipelines
-              </div>
+              <div class="section">
 
-              <div class="nav-item">
-                🕘 Deployments
-              </div>
-
-              <div class="nav-item">
-                🛡 Security
-              </div>
-
-            </div>
-
-            <div class="section">
-
-              <div class="section-title">
-                REPORTS
-              </div>
-
-              <a
-                class="report"
-                href="./test-report/test-report.html"
-                target="_blank"
-              >
-                <span>✅ Test Results</span>
-
-                <div class="pill green">
-                  pass
-                </div>
-              </a>
-
-              <a
-                class="report"
-                href="./test-report/htmlcov/index.html"
-                target="_blank"
-              >
-                <span>📈 Coverage HTML</span>
-
-                <div class="pill blue">
-                  80%
-                </div>
-              </a>
-
-              <a
-                class="report"
-                href="./lint-report/lint-report.txt"
-                target="_blank"
-              >
-                <span>📄 Lint Report</span>
-
-                <div class="pill amber">
-                  warn
-                </div>
-              </a>
-
-              <a
-                class="report"
-                href="./security-report/bandit-report.json"
-                target="_blank"
-              >
-                <span>🛡 Security Report</span>
-
-                <div class="pill amber">
-                  warn
-                </div>
-              </a>
-
-              <a
-                class="report"
-                href="./dependency-report/dependency-report.json"
-                target="_blank"
-              >
-                <span>📦 Dependency Scan</span>
-
-                <div class="pill gray">
-                  35
-                </div>
-              </a>
-
-            </div>
-
-          </div>
-
-          <!-- MAIN -->
-
-          <div class="main">
-
-            <div class="top">
-
-              <div>
-
-                <div class="title">
-                  FastAPI pipeline dashboard
+                <div class="section-title">
+                  REPORTS
                 </div>
 
-                <div class="subtitle">
-                  Commit 2833df5 • main • 11 May 2026, 11:05 UTC
-                </div>
+                <a class="report" href="./test-report/test-report.html">
+                  <span>✅ Test Results</span>
+                  <div class="pill green">pass</div>
+                </a>
 
-              </div>
+                <a class="report" href="./test-report/htmlcov/index.html">
+                  <span>📈 Coverage HTML</span>
+                  <div class="pill blue">80%</div>
+                </a>
 
-              <button class="run">
-                ▶ Run #290730
-              </button>
+                <a class="report" href="./lint-report/lint-report.txt">
+                  <span>📄 Lint Report</span>
+                  <div class="pill amber">warn</div>
+                </a>
 
-            </div>
+                <a class="report" href="./security-report/bandit-report.json">
+                  <span>🛡 Security Report</span>
+                  <div class="pill amber">warn</div>
+                </a>
 
-            <!-- HERO -->
-
-            <div class="hero">
-
-              <div class="health">
-                🟢 Pipeline Healthy
-              </div>
-
-              <div class="hero-text">
-                Real-time CI/CD visibility with testing,
-                coverage analysis, security scanning,
-                dependency monitoring and deployment insights.
-              </div>
-
-              <!-- PIPELINE -->
-
-              <div class="pipeline">
-
-                <div class="stage success">
-                  <div class="icon">✓</div>
-                  <div class="stage-name">Checkout</div>
-                  <div class="stage-status">Completed</div>
-                  <div class="stage-time">11:05:24</div>
-                </div>
-
-                <div class="connector">
-                  <div></div><div></div><div></div>
-                </div>
-
-                <div class="stage success">
-                  <div class="icon">✓</div>
-                  <div class="stage-name">Tests</div>
-                  <div class="stage-status">Passed</div>
-                  <div class="stage-time">11:06:02</div>
-                </div>
-
-                <div class="connector">
-                  <div></div><div></div><div></div>
-                </div>
-
-                <div class="stage success">
-                  <div class="icon">✓</div>
-                  <div class="stage-name">Coverage</div>
-                  <div class="stage-status">80.4%</div>
-                  <div class="stage-time">11:06:25</div>
-                </div>
-
-                <div class="connector warn">
-                  <div></div><div></div><div></div>
-                </div>
-
-                <div class="stage warning">
-                  <div class="icon">⚠</div>
-                  <div class="stage-name">Lint</div>
-                  <div class="stage-status">Warning</div>
-                  <div class="stage-time">11:07:12</div>
-                </div>
-
-                <div class="connector warn">
-                  <div></div><div></div><div></div>
-                </div>
-
-                <div class="stage warning">
-                  <div class="icon">⚠</div>
-                  <div class="stage-name">Security</div>
-                  <div class="stage-status">Warning</div>
-                  <div class="stage-time">11:07:58</div>
-                </div>
-
-                <div class="connector warn">
-                  <div></div><div></div><div></div>
-                </div>
-
-                <div class="stage warning">
-                  <div class="icon">⚠</div>
-                  <div class="stage-name">Dependencies</div>
-                  <div class="stage-status">35 vulns</div>
-                  <div class="stage-time">11:09:32</div>
-                </div>
+                <a class="report" href="./dependency-report/dependency-report.json">
+                  <span>📦 Dependency Scan</span>
+                  <div class="pill gray">35</div>
+                </a>
 
               </div>
 
             </div>
 
-            <!-- METRICS -->
+            <!-- =========================================================
+            MAIN
+            ========================================================= -->
 
-            <div class="metrics">
+            <div class="main">
 
-              <div class="metric">
+              <div class="top">
 
-                <div class="metric-title">
-                  Tests
-                </div>
+                <div>
 
-                <div class="metric-value">
-                  Passed
-                </div>
-
-                <div class="metric-sub">
-                  All tests passed successfully
-                </div>
-
-              </div>
-
-              <div class="metric">
-
-                <div class="metric-title">
-                  Coverage
-                </div>
-
-                <div class="metric-value">
-                  80.4%
-                </div>
-
-                <div class="metric-progress">
-                  <div class="metric-fill"></div>
-                </div>
-
-                <div class="metric-sub">
-                  Target ≥ 80%
-                </div>
-
-              </div>
-
-              <div class="metric">
-
-                <div class="metric-title">
-                  Lint
-                </div>
-
-                <div class="metric-value">
-                  Warning
-                </div>
-
-                <div class="metric-sub">
-                  Issues found
-                </div>
-
-              </div>
-
-              <div class="metric">
-
-                <div class="metric-title">
-                  Security
-                </div>
-
-                <div class="metric-value">
-                  Warning
-                </div>
-
-                <div class="metric-sub">
-                  See security report
-                </div>
-
-              </div>
-
-              <div class="metric">
-
-                <div class="metric-title">
-                  Dependencies
-                </div>
-
-                <div class="metric-value">
-                  35
-                </div>
-
-                <div class="metric-sub">
-                  Total vulnerabilities
-                </div>
-
-              </div>
-
-            </div>
-
-            <!-- BOTTOM -->
-
-            <div class="bottom">
-
-              <!-- COVERAGE -->
-
-              <div class="panel">
-
-                <div class="panel-title">
-                  Coverage Trend
-                </div>
-
-                <canvas id="coverageChart"></canvas>
-
-              </div>
-
-              <!-- DONUT -->
-
-              <div class="panel">
-
-                <div class="panel-title">
-                  Vulnerabilities by Severity
-                </div>
-
-                <canvas id="vulnChart"></canvas>
-
-              </div>
-
-              <!-- ACTIVITY -->
-
-              <div class="panel">
-
-                <div class="panel-title">
-                  Recent Activity
-                </div>
-
-                <div class="timeline">
-
-                  <div class="event">
-
-                    <div class="event-dot"></div>
-
-                    <div>
-
-                      <div class="event-time">
-                        11:05:24
-                      </div>
-
-                      <div class="event-title">
-                        Pipeline started
-                      </div>
-
-                      <div class="event-desc">
-                        GitHub Actions workflow triggered
-                      </div>
-
-                    </div>
-
+                  <div class="title">
+                    FastAPI pipeline dashboard
                   </div>
 
-                  <div class="event">
-
-                    <div class="event-dot"></div>
-
-                    <div>
-
-                      <div class="event-time">
-                        11:06:02
-                      </div>
-
-                      <div class="event-title">
-                        Tests passed
-                      </div>
-
-                      <div class="event-desc">
-                        All tests completed successfully
-                      </div>
-
-                    </div>
-
+                  <div class="subtitle">
+                    Commit 2833df5 • main • 11 May 2026
                   </div>
 
-                  <div class="event">
+                </div>
 
-                    <div class="event-dot"></div>
+                <button class="run">
+                  ▶ Run #290730
+                </button>
 
-                    <div>
+              </div>
 
-                      <div class="event-time">
-                        11:06:25
+              <!-- HERO -->
+
+              <div class="hero">
+
+                <div class="health">
+                  🟢 Pipeline Healthy
+                </div>
+
+                <div class="hero-text">
+                  Real-time CI/CD visibility with testing,
+                  coverage analysis, security scanning,
+                  dependency monitoring and deployment insights.
+                </div>
+
+                <!-- PIPELINE -->
+
+                <div class="pipeline">
+
+                  <div class="stage success">
+                    <div class="icon">✓</div>
+                    <div class="stage-name">Checkout</div>
+                    <div class="stage-status">Completed</div>
+                    <div class="stage-time">11:05:24</div>
+                  </div>
+
+                  <div class="connector">
+                    <div></div><div></div><div></div>
+                  </div>
+
+                  <div class="stage success">
+                    <div class="icon">✓</div>
+                    <div class="stage-name">Tests</div>
+                    <div class="stage-status">Passed</div>
+                    <div class="stage-time">11:06:02</div>
+                  </div>
+
+                  <div class="connector">
+                    <div></div><div></div><div></div>
+                  </div>
+
+                  <div class="stage success">
+                    <div class="icon">✓</div>
+                    <div class="stage-name">Coverage</div>
+                    <div class="stage-status">80.4%</div>
+                    <div class="stage-time">11:06:25</div>
+                  </div>
+
+                  <div class="connector warn">
+                    <div></div><div></div><div></div>
+                  </div>
+
+                  <div class="stage warning">
+                    <div class="icon">⚠</div>
+                    <div class="stage-name">Lint</div>
+                    <div class="stage-status">Warning</div>
+                    <div class="stage-time">11:07:12</div>
+                  </div>
+
+                  <div class="connector warn">
+                    <div></div><div></div><div></div>
+                  </div>
+
+                  <div class="stage warning">
+                    <div class="icon">⚠</div>
+                    <div class="stage-name">Security</div>
+                    <div class="stage-status">Warning</div>
+                    <div class="stage-time">11:07:58</div>
+                  </div>
+
+                  <div class="connector warn">
+                    <div></div><div></div><div></div>
+                  </div>
+
+                  <div class="stage warning">
+                    <div class="icon">⚠</div>
+                    <div class="stage-name">Dependencies</div>
+                    <div class="stage-status">35 vulns</div>
+                    <div class="stage-time">11:09:32</div>
+                  </div>
+
+                </div>
+
+              </div>
+
+              <!-- METRICS -->
+
+              <div class="metrics">
+
+                <div class="metric">
+                  <div class="metric-title">Tests</div>
+                  <div class="metric-value">Passed</div>
+                  <div class="metric-sub">
+                    All tests passed successfully
+                  </div>
+                </div>
+
+                <div class="metric">
+                  <div class="metric-title">Coverage</div>
+                  <div class="metric-value">80.4%</div>
+
+                  <div class="metric-progress">
+                    <div class="metric-fill"></div>
+                  </div>
+
+                  <div class="metric-sub">
+                    Target ≥ 80%
+                  </div>
+                </div>
+
+                <div class="metric">
+                  <div class="metric-title">Lint</div>
+                  <div class="metric-value">Warning</div>
+                  <div class="metric-sub">
+                    Issues found
+                  </div>
+                </div>
+
+                <div class="metric">
+                  <div class="metric-title">Security</div>
+                  <div class="metric-value">Warning</div>
+                  <div class="metric-sub">
+                    See security report
+                  </div>
+                </div>
+
+                <div class="metric">
+                  <div class="metric-title">Dependencies</div>
+                  <div class="metric-value">35</div>
+                  <div class="metric-sub">
+                    Total vulnerabilities
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- BOTTOM -->
+
+              <div class="bottom">
+
+                <div class="panel">
+
+                  <div class="panel-title">
+                    Coverage Trend
+                  </div>
+
+                  <canvas id="coverageChart"></canvas>
+
+                </div>
+
+                <div class="panel">
+
+                  <div class="panel-title">
+                    Vulnerabilities by Severity
+                  </div>
+
+                  <canvas id="vulnChart"></canvas>
+
+                </div>
+
+                <div class="panel">
+
+                  <div class="panel-title">
+                    Recent Activity
+                  </div>
+
+                  <div class="timeline">
+
+                    <div class="event">
+                      <div class="event-dot"></div>
+
+                      <div>
+                        <div class="event-time">11:05:24</div>
+                        <div class="event-title">Pipeline started</div>
+
+                        <div class="event-desc">
+                          GitHub Actions workflow triggered
+                        </div>
                       </div>
+                    </div>
 
-                      <div class="event-title">
-                        Coverage generated
+                    <div class="event">
+                      <div class="event-dot"></div>
+
+                      <div>
+                        <div class="event-time">11:06:02</div>
+                        <div class="event-title">Tests passed</div>
+
+                        <div class="event-desc">
+                          All tests completed successfully
+                        </div>
                       </div>
+                    </div>
 
-                      <div class="event-desc">
-                        Coverage: 80.4%
+                    <div class="event">
+                      <div class="event-dot"></div>
+
+                      <div>
+                        <div class="event-time">11:06:25</div>
+                        <div class="event-title">Coverage generated</div>
+
+                        <div class="event-desc">
+                          Coverage: 80.4%
+                        </div>
                       </div>
-
                     </div>
 
                   </div>
@@ -1378,137 +1279,129 @@ jobs:
 
               </div>
 
+              <footer>
+                FastAPI CI/CD Dashboard • Built with ❤️ using GitHub Actions
+              </footer>
+
             </div>
 
-            <footer>
-              FastAPI CI/CD Dashboard • Built with ❤️ using GitHub Actions
-            </footer>
+            <!-- =========================================================
+            CHARTS
+            ========================================================= -->
 
-          </div>
+            <script>
 
-          <script>
+            new Chart(
+              document.getElementById(
+                'coverageChart'
+              ),
+              {
 
-          new Chart(
-            document.getElementById(
-              'coverageChart'
-            ),
-            {
+                type:'line',
 
-              type:'line',
+                data:{
 
-              data:{
-
-                labels:[
-                  '05 May',
-                  '06 May',
-                  '07 May',
-                  '08 May',
-                  '09 May',
-                  '10 May',
-                  '11 May'
-                ],
-
-                datasets:[{
-
-                  data:[
-                    73,
-                    75,
-                    78,
-                    75,
-                    83,
-                    89,
-                    81
+                  labels:[
+                    '05 May',
+                    '06 May',
+                    '07 May',
+                    '08 May',
+                    '09 May',
+                    '10 May',
+                    '11 May'
                   ],
 
-                  borderColor:'#22c55e',
+                  datasets:[{
 
-                  backgroundColor:
-                  'rgba(34,197,94,.15)',
+                    data:[
+                      73,
+                      75,
+                      78,
+                      75,
+                      83,
+                      89,
+                      81
+                    ],
 
-                  fill:true,
+                    borderColor:'#22c55e',
 
-                  tension:.4
-                }]
-              },
+                    backgroundColor:
+                    'rgba(34,197,94,.15)',
 
-              options:{
+                    fill:true,
 
-                plugins:{
-                  legend:{display:false}
+                    tension:.4
+                  }]
                 },
 
-                scales:{
+                options:{
 
-                  x:{
-                    ticks:{
-                      color:'#94a3b8'
-                    },
-
-                    grid:{
-                      color:'#1e293b'
-                    }
+                  plugins:{
+                    legend:{display:false}
                   },
 
-                  y:{
-                    ticks:{
-                      color:'#94a3b8'
+                  scales:{
+
+                    x:{
+                      ticks:{color:'#94a3b8'},
+                      grid:{color:'#1e293b'}
                     },
 
-                    grid:{
-                      color:'#1e293b'
+                    y:{
+                      ticks:{color:'#94a3b8'},
+                      grid:{color:'#1e293b'}
                     }
                   }
                 }
               }
-            }
-          );
+            );
 
-          new Chart(
-            document.getElementById(
-              'vulnChart'
-            ),
-            {
+            new Chart(
+              document.getElementById(
+                'vulnChart'
+              ),
+              {
 
-              type:'doughnut',
+                type:'doughnut',
 
-              data:{
+                data:{
 
-                labels:[
-                  'Critical',
-                  'High',
-                  'Medium',
-                  'Low'
-                ],
-
-                datasets:[{
-
-                  data:[
-                    4,
-                    12,
-                    28,
-                    42
+                  labels:[
+                    'Critical',
+                    'High',
+                    'Medium',
+                    'Low'
                   ],
 
-                  backgroundColor:[
-                    '#ef4444',
-                    '#f97316',
-                    '#fbbf24',
-                    '#2563eb'
-                  ]
-                }]
+                  datasets:[{
+
+                    data:[
+                      4,
+                      12,
+                      28,
+                      42
+                    ],
+
+                    backgroundColor:[
+                      '#ef4444',
+                      '#f97316',
+                      '#fbbf24',
+                      '#2563eb'
+                    ]
+                  }]
+                }
               }
-            }
-          );
+            );
 
-          </script>
+            </script>
 
-          </body>
-          </html>
+            </body>
+            </html>
 
-          EOF
+            EOF
 
 # ============================================================
-# NO JEKYLL
+# DISABLE JEKYLL
 # ============================================================
 
       - name: Disable Jekyll
