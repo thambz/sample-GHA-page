@@ -6,7 +6,6 @@
 name: FastAPI Production CI/CD
 
 on:
-
   push:
     branches:
       - main
@@ -234,7 +233,7 @@ jobs:
           path: reports/bandit-report.json
 
 # ============================================================
-# DEPENDENCY
+# DEPENDENCY SCAN
 # ============================================================
 
   dependency-scan:
@@ -360,7 +359,7 @@ jobs:
           path: site/dependency-report
 
 # ============================================================
-# STATUS.JSON
+# STATUS JSON
 # ============================================================
 
       - name: Build status.json
@@ -373,18 +372,10 @@ jobs:
             "commit":"${{ github.sha }}",
             "branch":"${{ github.ref_name }}",
             "run_id":"${{ github.run_id }}",
-
-            "coverage":
-              "${{ needs.test.outputs.coverage }}",
-
-            "lint":
-              "${{ needs.lint.outputs.status }}",
-
-            "security":
-              "${{ needs.security.outputs.status }}",
-
-            "dependency":
-              "${{ needs.dependency-scan.outputs.vulns }}"
+            "coverage":"${{ needs.test.outputs.coverage }}",
+            "lint":"${{ needs.lint.outputs.status }}",
+            "security":"${{ needs.security.outputs.status }}",
+            "dependency":"${{ needs.dependency-scan.outputs.vulns }}"
           }
           EOF
 
@@ -410,15 +401,15 @@ jobs:
           />
 
           <title>
-            FastAPI Pipeline Dashboard
+            Pipeline Dashboard
           </title>
-
-          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
           <link
             href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
             rel="stylesheet"
           />
+
+          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
           <style>
 
@@ -433,7 +424,6 @@ jobs:
 
             --green:#22c55e;
             --amber:#f59e0b;
-            --red:#ef4444;
             --blue:#2563eb;
           }
 
@@ -461,45 +451,63 @@ jobs:
 
           .sidebar{
 
-            width:220px;
-
             position:fixed;
 
             top:0;
             left:0;
             bottom:0;
 
+            width:220px;
+
             background:#020817;
 
             border-right:1px solid var(--border);
 
-            padding:18px;
+            padding:20px;
           }
 
           .logo{
 
-            font-size:20px;
+            font-size:26px;
             font-weight:900;
 
-            margin-bottom:24px;
-
-            color:#3b82f6;
+            margin-bottom:28px;
           }
 
-          .nav-item{
+          .menu{
 
-            padding:12px 14px;
+            display:flex;
+            flex-direction:column;
+
+            gap:10px;
+          }
+
+          .menu a{
+
+            padding:12px 16px;
 
             border-radius:14px;
 
-            background:#111827;
+            text-decoration:none;
 
-            border:1px solid var(--border);
+            color:white;
 
             font-size:14px;
-            font-weight:700;
 
-            margin-bottom:20px;
+            background:#111827;
+
+            border:1px solid transparent;
+
+            transition:.25s;
+          }
+
+          .menu a:hover{
+            border-color:#2563eb;
+          }
+
+          .section{
+
+            margin-top:30px;
           }
 
           .section-title{
@@ -508,9 +516,9 @@ jobs:
 
             font-size:11px;
 
-            letter-spacing:.15em;
+            letter-spacing:.18em;
 
-            margin-bottom:14px;
+            margin-bottom:12px;
           }
 
           .report{
@@ -538,7 +546,7 @@ jobs:
 
           .pill{
 
-            padding:4px 9px;
+            padding:4px 10px;
 
             border-radius:999px;
 
@@ -566,24 +574,6 @@ jobs:
             color:#facc15;
           }
 
-          .footer{
-
-            position:absolute;
-
-            bottom:20px;
-
-            left:18px;
-            right:18px;
-
-            border-top:1px solid var(--border);
-
-            padding-top:16px;
-
-            color:#94a3b8;
-
-            font-size:12px;
-          }
-
           /* MAIN */
 
           .main{
@@ -592,61 +582,70 @@ jobs:
 
             width:calc(100vw - 220px);
 
-            padding:18px;
+            padding:20px 24px;
           }
 
-          .title{
+          .top{
 
-            font-size:28px;
+            display:flex;
+            justify-content:space-between;
+            align-items:flex-start;
+
+            gap:20px;
+          }
+
+          .page-title{
+
+            font-size:36px;
             font-weight:900;
+
+            line-height:1.1;
           }
 
-          .subtitle{
+          .page-subtitle{
 
-            margin-top:8px;
+            margin-top:10px;
 
             color:var(--muted);
 
             font-size:13px;
           }
 
-          .run{
-
-            margin-top:14px;
+          .run-btn{
 
             border:none;
 
             background:linear-gradient(
               to right,
-              #2563eb,
-              #3b82f6
+              #06b6d4,
+              #2563eb
             );
 
             color:white;
 
-            padding:10px 18px;
+            padding:12px 20px;
 
-            border-radius:12px;
+            border-radius:14px;
 
             font-size:13px;
             font-weight:700;
 
-            box-shadow:0 8px 20px #2563eb30;
+            box-shadow:0 10px 25px #2563eb30;
           }
 
           /* HERO */
 
           .hero{
 
-            margin-top:20px;
+            margin-top:22px;
 
             background:rgba(15,23,42,.72);
 
             border:1px solid var(--border);
 
-            border-radius:22px;
+            border-radius:24px;
 
-            padding:20px;
+            padding:24px;
           }
 
           .health{
@@ -667,36 +666,44 @@ jobs:
             font-weight:700;
           }
 
-          .hero-text{
+          .hero-title{
+
+            margin-top:24px;
+
+            font-size:28px;
+            font-weight:900;
+
+            line-height:1.2;
+          }
+
+          .hero-description{
 
             margin-top:18px;
 
             color:#cbd5e1;
 
-            line-height:1.7;
-
             font-size:14px;
+
+            line-height:1.8;
+
+            max-width:900px;
           }
 
           /* PIPELINE */
 
-          .pipeline{
+          .pipeline-grid{
 
-            margin-top:24px;
+            margin-top:26px;
 
-            display:flex;
-            align-items:center;
+            display:grid;
 
-            gap:12px;
+            grid-template-columns:
+            repeat(5,1fr);
 
-            overflow-x:auto;
-
-            padding-bottom:10px;
+            gap:14px;
           }
 
-          .stage{
-
-            min-width:130px;
+          .pipeline-card{
 
             background:#0b1220;
 
@@ -704,92 +711,28 @@ jobs:
 
             border-radius:18px;
 
-            padding:16px;
+            min-height:120px;
 
-            text-align:center;
-          }
-
-          .stage.success{
-            border-color:#14532d;
-          }
-
-          .stage.warning{
-            border-color:#78350f;
-          }
-
-          .icon{
-
-            width:42px;
-            height:42px;
-
-            border-radius:50%;
+            padding:18px;
 
             display:flex;
-            align-items:center;
+            flex-direction:column;
             justify-content:center;
+          }
 
-            margin:auto;
+          .pipeline-card h3{
 
             font-size:18px;
-            font-weight:900;
-          }
-
-          .success .icon{
-            background:#14532d;
-            color:#4ade80;
-          }
-
-          .warning .icon{
-            background:#78350f;
-            color:#fbbf24;
-          }
-
-          .stage-name{
-
-            margin-top:12px;
-
-            font-size:16px;
             font-weight:800;
           }
 
-          .stage-status{
+          .pipeline-card p{
 
-            margin-top:6px;
+            margin-top:10px;
 
-            font-size:13px;
-          }
+            font-size:14px;
 
-          .stage-time{
-
-            margin-top:6px;
-
-            color:#94a3b8;
-
-            font-size:11px;
-          }
-
-          .connector{
-
-            min-width:40px;
-
-            display:flex;
-            justify-content:center;
-
-            gap:5px;
-          }
-
-          .connector div{
-
-            width:9px;
-            height:9px;
-
-            border-radius:50%;
-
-            background:#22c55e;
-          }
-
-          .connector.warn div{
-            background:#fbbf24;
+            color:#cbd5e1;
           }
 
           /* METRICS */
@@ -801,12 +744,12 @@ jobs:
             display:grid;
 
             grid-template-columns:
-            repeat(5,1fr);
+            repeat(4,1fr);
 
-            gap:12px;
+            gap:14px;
           }
 
-          .metric{
+          .metric-card{
 
             background:rgba(15,23,42,.72);
 
@@ -814,7 +757,7 @@ jobs:
 
             border-radius:18px;
 
-            padding:16px;
+            padding:18px;
           }
 
           .metric-label{
@@ -822,23 +765,16 @@ jobs:
             color:#94a3b8;
 
             font-size:11px;
+
+            letter-spacing:.12em;
           }
 
           .metric-value{
 
             margin-top:12px;
 
-            font-size:30px;
+            font-size:28px;
             font-weight:900;
-          }
-
-          .metric-sub{
-
-            margin-top:8px;
-
-            color:#cbd5e1;
-
-            font-size:12px;
           }
 
           .metric-progress{
@@ -856,9 +792,9 @@ jobs:
 
           .metric-fill{
 
-            height:100%;
-
             width:80%;
+
+            height:100%;
 
             background:linear-gradient(
               to right,
@@ -876,7 +812,7 @@ jobs:
             display:grid;
 
             grid-template-columns:
-            1.2fr 1fr 1fr;
+            1.2fr 1fr;
 
             gap:16px;
           }
@@ -900,33 +836,30 @@ jobs:
             margin-bottom:18px;
           }
 
-          canvas{
-            max-width:100% !important;
-          }
+          .activity{
 
-          /* TIMELINE */
-
-          .timeline{
             display:flex;
             flex-direction:column;
+
             gap:18px;
           }
 
           .event{
+
             display:flex;
             gap:12px;
           }
 
-          .event-dot{
+          .dot{
 
             width:12px;
             height:12px;
 
             border-radius:50%;
 
-            margin-top:4px;
+            background:#22c55e;
 
-            flex-shrink:0;
+            margin-top:5px;
           }
 
           .event-time{
@@ -955,22 +888,17 @@ jobs:
             line-height:1.5;
           }
 
-          /* FOOT */
-
-          .foot{
-
-            margin-top:18px;
-
-            text-align:center;
-
-            color:#94a3b8;
-
-            font-size:12px;
+          canvas{
+            max-width:100% !important;
           }
 
           /* RESPONSIVE */
 
           @media(max-width:1400px){
+
+            .pipeline-grid{
+              grid-template-columns:repeat(2,1fr);
+            }
 
             .metrics{
               grid-template-columns:repeat(2,1fr);
@@ -981,41 +909,31 @@ jobs:
             }
           }
 
-          @media(max-width:1100px){
+          @media(max-width:1000px){
 
             .sidebar{
               position:relative;
               width:100%;
-              height:auto;
             }
 
             .main{
               margin-left:0;
               width:100%;
             }
-
-            .footer{
-              position:relative;
-              left:0;
-              right:0;
-              bottom:0;
-              margin-top:20px;
-            }
           }
 
           @media(max-width:700px){
+
+            .pipeline-grid{
+              grid-template-columns:1fr;
+            }
 
             .metrics{
               grid-template-columns:1fr;
             }
 
-            .pipeline{
+            .top{
               flex-direction:column;
-              align-items:stretch;
-            }
-
-            .connector{
-              display:none;
             }
           }
 
@@ -1030,81 +948,97 @@ jobs:
           <div class="sidebar">
 
             <div class="logo">
-              🚀 FastAPI
+              FastAPI CI/CD
             </div>
 
-            <div class="nav-item">
-              📊 Overview
+            <div class="menu">
+
+              <a href="#">
+                Overview
+              </a>
+
+              <a href="#">
+                Pipelines
+              </a>
+
+              <a href="#">
+                Deployments
+              </a>
+
+              <a href="#">
+                Security
+              </a>
+
+              <a href="#">
+                Metrics
+              </a>
+
+              <a href="#">
+                Logs
+              </a>
+
             </div>
 
-            <div class="section-title">
-              REPORTS
-            </div>
+            <div class="section">
 
-            <a
-              class="report"
-              href="./test-report/test-report.html"
-              target="_blank"
-            >
-              <span>✅ Test Results</span>
-              <div class="pill green">
-                pass
-              </div>
-            </a>
-
-            <a
-              class="report"
-              href="./test-report/htmlcov/index.html"
-              target="_blank"
-            >
-              <span>📈 Coverage</span>
-              <div class="pill blue">
-                80%
-              </div>
-            </a>
-
-            <a
-              class="report"
-              href="./lint-report/lint-report.txt"
-              target="_blank"
-            >
-              <span>📄 Lint</span>
-              <div class="pill amber">
-                warn
-              </div>
-            </a>
-
-            <a
-              class="report"
-              href="./security-report/bandit-report.json"
-              target="_blank"
-            >
-              <span>🛡 Security</span>
-              <div class="pill amber">
-                warn
-              </div>
-            </a>
-
-            <a
-              class="report"
-              href="./dependency-report/dependency-report.json"
-              target="_blank"
-            >
-              <span>📦 Dependency</span>
-              <div class="pill gray">
-                35
-              </div>
-            </a>
-
-            <div class="footer">
-
-              <div>
-                Generated 12 May 2026
+              <div class="section-title">
+                REPORTS
               </div>
 
-              <div style="margin-top:8px;">
-                FastAPI Enterprise Dashboard
-              </div>
+              <a
+                class="report"
+                href="./test-report/test-report.html"
+                target="_blank"
+              >
+                <span>Test Results</span>
+                <div class="pill green">
+                  pass
+                </div>
+              </a>
+
+              <a
+                class="report"
+                href="./test-report/htmlcov/index.html"
+                target="_blank"
+              >
+                <span>Coverage</span>
+                <div class="pill blue">
+                  80%
+                </div>
+              </a>
+
+              <a
+                class="report"
+                href="./lint-report/lint-report.txt"
+                target="_blank"
+              >
+                <span>Lint</span>
+                <div class="pill amber">
+                  warn
+                </div>
+              </a>
+
+              <a
+                class="report"
+                href="./security-report/bandit-report.json"
+                target="_blank"
+              >
+                <span>Security</span>
+                <div class="pill amber">
+                  warn
+                </div>
+              </a>
+
+              <a
+                class="report"
+                href="./dependency-report/dependency-report.json"
+                target="_blank"
+              >
+                <span>Dependencies</span>
+                <div class="pill gray">
+                  35
+                </div>
+              </a>
 
             </div>
 
@@ -1114,158 +1048,71 @@ jobs:
 
           <div class="main">
 
-            <div class="title">
-              FastAPI pipeline dashboard
-            </div>
+            <div class="top">
 
-            <div class="subtitle">
-              Commit 2833df5 • main • 11 May 2026
-            </div>
+              <div>
 
-            <button class="run">
-              ▶ Run #290730
-            </button>
+                <div class="page-title">
+                  Pipeline Dashboard
+                </div>
+
+                <div class="page-subtitle">
+                  Commit 9e741af • main • 2026-05-12
+                </div>
+
+              </div>
+
+              <button class="run-btn">
+                Run #707572
+              </button>
+
+            </div>
 
             <!-- HERO -->
 
             <div class="hero">
 
               <div class="health">
-                🟢 Pipeline Healthy
+                ● Production Healthy
               </div>
 
-              <div class="hero-text">
-                Real-time CI/CD visibility with testing,
-                coverage analysis, security scanning,
-                dependency monitoring and deployment insights.
+              <div class="hero-title">
+                Premium Production Pipeline
+              </div>
+
+              <div class="hero-description">
+                Real-time FastAPI CI/CD monitoring dashboard
+                with testing, security analysis, dependency
+                tracking and deployment visibility.
               </div>
 
               <!-- PIPELINE -->
 
-              <div class="pipeline">
+              <div class="pipeline-grid">
 
-                <div class="stage success">
-
-                  <div class="icon">
-                    ✓
-                  </div>
-
-                  <div class="stage-name">
-                    Checkout
-                  </div>
-
-                  <div class="stage-status">
-                    Completed
-                  </div>
-
-                  <div class="stage-time">
-                    11:05
-                  </div>
-
+                <div class="pipeline-card">
+                  <h3>Checkout</h3>
+                  <p>Completed</p>
                 </div>
 
-                <div class="connector">
-                  <div></div>
-                  <div></div>
-                  <div></div>
+                <div class="pipeline-card">
+                  <h3>Testing</h3>
+                  <p>Passed</p>
                 </div>
 
-                <div class="stage success">
-
-                  <div class="icon">
-                    ✓
-                  </div>
-
-                  <div class="stage-name">
-                    Tests
-                  </div>
-
-                  <div class="stage-status">
-                    Passed
-                  </div>
-
-                  <div class="stage-time">
-                    11:06
-                  </div>
-
+                <div class="pipeline-card">
+                  <h3>Lint</h3>
+                  <p>Warning</p>
                 </div>
 
-                <div class="connector">
-                  <div></div>
-                  <div></div>
-                  <div></div>
+                <div class="pipeline-card">
+                  <h3>Security</h3>
+                  <p>Scanning</p>
                 </div>
 
-                <div class="stage success">
-
-                  <div class="icon">
-                    ✓
-                  </div>
-
-                  <div class="stage-name">
-                    Coverage
-                  </div>
-
-                  <div class="stage-status">
-                    80.4%
-                  </div>
-
-                  <div class="stage-time">
-                    11:06
-                  </div>
-
-                </div>
-
-                <div class="connector warn">
-                  <div></div>
-                  <div></div>
-                  <div></div>
-                </div>
-
-                <div class="stage warning">
-
-                  <div class="icon">
-                    ⚠
-                  </div>
-
-                  <div class="stage-name">
-                    Lint
-                  </div>
-
-                  <div class="stage-status">
-                    Warning
-                  </div>
-
-                  <div class="stage-time">
-                    11:07
-                  </div>
-
-                </div>
-
-                <div class="connector warn">
-                  <div></div>
-                  <div></div>
-                  <div></div>
-                </div>
-
-                <div class="stage warning">
-
-                  <div class="icon">
-                    ⚠
-                  </div>
-
-                  <div class="stage-name">
-                    Security
-                  </div>
-
-                  <div class="stage-status">
-                    Warning
-                  </div>
-
-                  <div class="stage-time">
-                    11:08
-                  </div>
-
+                <div class="pipeline-card">
+                  <h3>Deploy</h3>
+                  <p>Running</p>
                 </div>
 
               </div>
@@ -1276,23 +1123,7 @@ jobs:
 
             <div class="metrics">
 
-              <div class="metric">
-
-                <div class="metric-label">
-                  TESTS
-                </div>
-
-                <div class="metric-value">
-                  Passed
-                </div>
-
-                <div class="metric-sub">
-                  All tests passed
-                </div>
-
-              </div>
-
-              <div class="metric">
+              <div class="metric-card">
 
                 <div class="metric-label">
                   COVERAGE
@@ -1308,50 +1139,38 @@ jobs:
 
               </div>
 
-              <div class="metric">
+              <div class="metric-card">
 
                 <div class="metric-label">
-                  LINT
+                  TESTS
                 </div>
 
                 <div class="metric-value">
-                  Warning
-                </div>
-
-                <div class="metric-sub">
-                  Issues detected
+                  PASSED
                 </div>
 
               </div>
 
-              <div class="metric">
+              <div class="metric-card">
 
                 <div class="metric-label">
                   SECURITY
                 </div>
 
                 <div class="metric-value">
-                  Warning
-                </div>
-
-                <div class="metric-sub">
-                  Review report
+                  WARNING
                 </div>
 
               </div>
 
-              <div class="metric">
+              <div class="metric-card">
 
                 <div class="metric-label">
-                  VULNS
+                  VULNERABILITIES
                 </div>
 
                 <div class="metric-value">
                   35
-                </div>
-
-                <div class="metric-sub">
-                  Total vulnerabilities
                 </div>
 
               </div>
@@ -1362,8 +1181,6 @@ jobs:
 
             <div class="bottom">
 
-              <!-- COVERAGE -->
-
               <div class="panel">
 
                 <div class="panel-title">
@@ -1372,27 +1189,10 @@ jobs:
 
                 <canvas
                   id="coverageChart"
-                  height="150"
+                  height="120"
                 ></canvas>
 
               </div>
-
-              <!-- DONUT -->
-
-              <div class="panel">
-
-                <div class="panel-title">
-                  Vulnerabilities
-                </div>
-
-                <canvas
-                  id="vulnChart"
-                  height="150"
-                ></canvas>
-
-              </div>
-
-              <!-- ACTIVITY -->
 
               <div class="panel">
 
@@ -1400,14 +1200,11 @@ jobs:
                   Recent Activity
                 </div>
 
-                <div class="timeline">
+                <div class="activity">
 
                   <div class="event">
 
-                    <div
-                      class="event-dot"
-                      style="background:#22c55e"
-                    ></div>
+                    <div class="dot"></div>
 
                     <div>
 
@@ -1429,10 +1226,7 @@ jobs:
 
                   <div class="event">
 
-                    <div
-                      class="event-dot"
-                      style="background:#22c55e"
-                    ></div>
+                    <div class="dot"></div>
 
                     <div>
 
@@ -1441,36 +1235,11 @@ jobs:
                       </div>
 
                       <div class="event-title">
-                        Tests passed
+                        Tests completed
                       </div>
 
                       <div class="event-desc">
-                        Coverage generated
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                  <div class="event">
-
-                    <div
-                      class="event-dot"
-                      style="background:#f59e0b"
-                    ></div>
-
-                    <div>
-
-                      <div class="event-time">
-                        11:07
-                      </div>
-
-                      <div class="event-title">
-                        Lint warning
-                      </div>
-
-                      <div class="event-desc">
-                        Check lint report
+                        Coverage generated successfully
                       </div>
 
                     </div>
@@ -1481,10 +1250,6 @@ jobs:
 
               </div>
 
-            </div>
-
-            <div class="foot">
-              FastAPI Enterprise CI/CD Dashboard
             </div>
 
           </div>
@@ -1561,64 +1326,6 @@ jobs:
 
                     grid:{
                       color:'#1e293b'
-                    }
-                  }
-                }
-              }
-            }
-          );
-
-          new Chart(
-            document.getElementById(
-              'vulnChart'
-            ),
-            {
-
-              type:'doughnut',
-
-              data:{
-
-                labels:[
-                  'Critical',
-                  'High',
-                  'Medium',
-                  'Low'
-                ],
-
-                datasets:[{
-
-                  data:[
-                    4,
-                    12,
-                    28,
-                    42
-                  ],
-
-                  backgroundColor:[
-                    '#ef4444',
-                    '#f97316',
-                    '#fbbf24',
-                    '#2563eb'
-                  ],
-
-                  borderWidth:0
-                }]
-              },
-
-              options:{
-
-                cutout:'72%',
-
-                plugins:{
-
-                  legend:{
-
-                    position:'bottom',
-
-                    labels:{
-                      color:'#f8fafc',
-                      boxWidth:10,
-                      font:{size:10}
                     }
                   }
                 }
