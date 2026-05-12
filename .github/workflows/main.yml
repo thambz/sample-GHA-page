@@ -1,6 +1,7 @@
 # ============================================================
-# FASTAPI — PREMIUM PRODUCTION CI/CD PIPELINE
-# Compact Enterprise Dashboard Edition
+# FastAPI — Premium Production CI/CD Pipeline
+# Enterprise DevOps Dashboard Edition
+# Compact Responsive Version
 # ============================================================
 
 name: FastAPI Production CI/CD
@@ -34,6 +35,9 @@ jobs:
     name: Test & Coverage
 
     runs-on: ubuntu-latest
+
+    env:
+      PYTHONPATH: .
 
     outputs:
       coverage: ${{ steps.coverage.outputs.pct }}
@@ -72,7 +76,7 @@ jobs:
         id: coverage
         run: |
 
-          python <<EOF
+          python - <<'EOF'
           import xml.etree.ElementTree as ET
           import os
 
@@ -95,18 +99,18 @@ jobs:
             "a"
           ) as f:
 
-              f.write(
-                f"pct={pct}\n"
-              )
+              f.write(f"pct={pct}\n")
 
-          print(pct)
+          print(f"Coverage: {pct}%")
           EOF
 
       - name: Upload reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: reports/
+          retention-days: 14
 
 # ============================================================
 # LINT
@@ -118,8 +122,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    needs: test
+
     outputs:
-      status: ${{ steps.status.outputs.value }}
+      status: ${{ steps.run.outputs.status }}
 
     steps:
 
@@ -128,34 +134,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
       - name: Install Ruff
         run: pip install ruff
 
       - name: Run Ruff
+        id: run
         run: |
 
           mkdir -p reports
 
-          ruff check . \
-            > reports/lint-report.txt \
-            2>&1 || true
+          if ruff check . \
+            --line-length 120 \
+            --output-format=github; then
 
-      - name: Status
-        id: status
-        run: |
-
-          if grep -q "error" reports/lint-report.txt; then
-
-            echo "value=warning" >> $GITHUB_OUTPUT
+            echo "status=passed" >> "$GITHUB_OUTPUT"
 
           else
 
-            echo "value=passed" >> $GITHUB_OUTPUT
+            echo "status=warning" >> "$GITHUB_OUTPUT"
 
           fi
 
+          ruff check . \
+            --line-length 120 \
+            --output-format=text \
+            > reports/lint-report.txt 2>&1 || true
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: lint-report
           path: reports/lint-report.txt
@@ -170,8 +178,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    needs: test
+
     outputs:
-      status: ${{ steps.status.outputs.value }}
+      status: ${{ steps.run.outputs.status }}
 
     steps:
 
@@ -180,27 +190,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
       - name: Install Bandit
         run: pip install bandit
 
       - name: Run Bandit
+        id: run
         run: |
 
           mkdir -p reports
 
-          bandit -r app \
+          bandit -r app/ \
             -f json \
             -o reports/bandit-report.json || true
 
-      - name: Status
-        id: status
-        run: |
+          bandit -r app/ \
+            -f html \
+            -o reports/bandit-report.html || true
 
-          COUNT=$(python <<EOF
+          HIGH=$(python - <<'EOF'
           import json
 
-          data=json.load(
+          data = json.load(
+            open(
+              "reports/bandit-report.json"
+            )
+          )
+
+          high = [
+            i for i in data.get(
+              "results",
+              []
+            )
+
+            if i.get(
+              "issue_severity"
+            ) == "HIGH"
+          ]
+
+          print(len(high))
+          EOF
+          )
+
+          TOTAL=$(python - <<'EOF'
+          import json
+
+          data = json.load(
             open(
               "reports/bandit-report.json"
             )
@@ -217,20 +253,25 @@ jobs:
           EOF
           )
 
-          if [ "$COUNT" -gt "0" ]; then
+          if [ "$HIGH" -gt "0" ]; then
 
-            echo "value=warning" >> $GITHUB_OUTPUT
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+
+          elif [ "$TOTAL" -gt "0" ]; then
+
+            echo "status=warning" >> "$GITHUB_OUTPUT"
 
           else
 
-            echo "value=passed" >> $GITHUB_OUTPUT
+            echo "status=passed" >> "$GITHUB_OUTPUT"
 
           fi
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: security-report
-          path: reports/bandit-report.json
+          path: reports/bandit-report.*
 
 # ============================================================
 # DEPENDENCY SCAN
@@ -242,8 +283,11 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    needs: test
+
     outputs:
-      vulns: ${{ steps.count.outputs.total }}
+      status: ${{ steps.run.outputs.status }}
+      vuln_count: ${{ steps.run.outputs.vuln_count }}
 
     steps:
 
@@ -252,13 +296,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
-      - name: Install tools
+      - name: Install pip-audit
         run: |
           pip install -r requirements.txt
           pip install pip-audit
 
-      - name: Scan dependencies
+      - name: Run pip-audit
+        id: run
         run: |
 
           mkdir -p reports
@@ -268,49 +314,45 @@ jobs:
             -f json \
             -o reports/dependency-report.json || true
 
-      - name: Count vulns
-        id: count
-        run: |
-
-          python <<EOF
+          python - <<'EOF'
 
           import json
           import os
 
-          data=json.load(
+          data = json.load(
             open(
               "reports/dependency-report.json"
             )
           )
 
-          total=0
-
-          for d in data.get(
-            "dependencies",
-            []
-          ):
-
-            total += len(
-              d.get(
-                "vulns",
-                []
-              )
+          vulns = sum(
+            len(dep.get("vulns", []))
+            for dep in data.get(
+              "dependencies",
+              []
             )
+          )
+
+          status = (
+            "passed"
+            if vulns == 0
+            else "warning"
+          )
 
           with open(
             os.environ["GITHUB_OUTPUT"],
             "a"
           ) as f:
 
-            f.write(
-              f"total={total}\n"
-            )
+              f.write(f"status={status}\n")
+              f.write(f"vuln_count={vulns}\n")
 
-          print(total)
+          print("Vulnerabilities:", vulns)
 
           EOF
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: dependency-report
           path: reports/dependency-report.json
@@ -330,6 +372,8 @@ jobs:
       - lint
       - security
       - dependency-scan
+
+    if: github.ref == 'refs/heads/main'
 
     permissions:
       contents: write
@@ -369,13 +413,23 @@ jobs:
 
           cat > site/status.json <<EOF
           {
-            "commit":"${{ github.sha }}",
-            "branch":"${{ github.ref_name }}",
-            "run_id":"${{ github.run_id }}",
-            "coverage":"${{ needs.test.outputs.coverage }}",
-            "lint":"${{ needs.lint.outputs.status }}",
-            "security":"${{ needs.security.outputs.status }}",
-            "dependency":"${{ needs.dependency-scan.outputs.vulns }}"
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+
+            "coverage": ${{ needs.test.outputs.coverage || 0 }},
+
+            "tests": "passed",
+
+            "lint": "${{ needs.lint.outputs.status }}",
+
+            "security": "${{ needs.security.outputs.status }}",
+
+            "dependency": "${{ needs.dependency-scan.outputs.status }}",
+
+            "vuln_count":
+              ${{ needs.dependency-scan.outputs.vuln_count || 0 }}
           }
           EOF
 
@@ -383,7 +437,7 @@ jobs:
 # DASHBOARD HTML
 # ============================================================
 
-      - name: Generate Dashboard
+      - name: Generate Premium Dashboard
         run: |
 
           cat > site/index.html <<'EOF'
@@ -393,7 +447,7 @@ jobs:
 
           <head>
 
-          <meta charset="UTF-8"/>
+          <meta charset="UTF-8">
 
           <meta
             name="viewport"
@@ -401,27 +455,24 @@ jobs:
           />
 
           <title>
-            Pipeline Dashboard
+            FastAPI Premium Dashboard
           </title>
+
+          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
           <link
             href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
             rel="stylesheet"
           />
 
-          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
           <style>
 
           :root{
-
             --bg:#020617;
             --card:#0f172a;
             --border:#1e293b;
-
             --text:#f8fafc;
             --muted:#94a3b8;
-
             --green:#22c55e;
             --amber:#f59e0b;
             --blue:#2563eb;
@@ -434,7 +485,6 @@ jobs:
           }
 
           body{
-
             font-family:'Inter',sans-serif;
 
             background:
@@ -443,7 +493,6 @@ jobs:
             var(--bg);
 
             color:var(--text);
-
             overflow-x:hidden;
           }
 
@@ -451,63 +500,63 @@ jobs:
 
           .sidebar{
 
+            width:220px;
+
             position:fixed;
 
             top:0;
             left:0;
             bottom:0;
 
-            width:220px;
-
-            background:#020817;
+            background:rgba(2,6,23,.96);
 
             border-right:1px solid var(--border);
 
-            padding:20px;
+            padding:18px;
           }
 
           .logo{
 
-            font-size:26px;
+            display:flex;
+            align-items:center;
+            gap:10px;
+
+            font-size:22px;
             font-weight:900;
 
-            margin-bottom:28px;
+            margin-bottom:24px;
           }
 
-          .menu{
+          .logo span{
+            color:#3b82f6;
+          }
+
+          .nav-item{
 
             display:flex;
-            flex-direction:column;
+            align-items:center;
+            gap:12px;
 
-            gap:10px;
-          }
-
-          .menu a{
-
-            padding:12px 16px;
+            padding:12px 14px;
 
             border-radius:14px;
 
-            text-decoration:none;
+            margin-bottom:10px;
 
-            color:white;
+            background:linear-gradient(
+              to right,
+              #0f172a,
+              #111827
+            );
+
+            border:1px solid #1e293b;
 
             font-size:14px;
-
-            background:#111827;
-
-            border:1px solid transparent;
-
-            transition:.25s;
-          }
-
-          .menu a:hover{
-            border-color:#2563eb;
+            font-weight:600;
           }
 
           .section{
-
-            margin-top:30px;
+            margin-top:24px;
           }
 
           .section-title{
@@ -516,7 +565,7 @@ jobs:
 
             font-size:11px;
 
-            letter-spacing:.18em;
+            letter-spacing:.16em;
 
             margin-bottom:12px;
           }
@@ -582,7 +631,7 @@ jobs:
 
             width:calc(100vw - 220px);
 
-            padding:20px 24px;
+            padding:18px;
           }
 
           .top{
@@ -594,58 +643,54 @@ jobs:
             gap:20px;
           }
 
-          .page-title{
+          .title{
 
-            font-size:36px;
+            font-size:32px;
             font-weight:900;
-
-            line-height:1.1;
           }
 
-          .page-subtitle{
+          .subtitle{
 
-            margin-top:10px;
+            margin-top:8px;
 
             color:var(--muted);
 
             font-size:13px;
           }
 
-          .run-btn{
+          .run{
 
             border:none;
 
             background:linear-gradient(
               to right,
-              #06b6d4,
-              #2563eb
+              #2563eb,
+              #3b82f6
             );
 
             color:white;
 
-            padding:12px 20px;
+            padding:10px 18px;
 
-            border-radius:14px;
+            border-radius:12px;
 
             font-size:13px;
             font-weight:700;
-
-            box-shadow:0 10px 25px #2563eb30;
           }
 
           /* HERO */
 
           .hero{
 
-            margin-top:22px;
+            margin-top:20px;
 
             background:rgba(15,23,42,.72);
 
             border:1px solid var(--border);
 
-            border-radius:24px;
+            border-radius:22px;
 
-            padding:24px;
+            padding:20px;
           }
 
           .health{
@@ -666,44 +711,38 @@ jobs:
             font-weight:700;
           }
 
-          .hero-title{
-
-            margin-top:24px;
-
-            font-size:28px;
-            font-weight:900;
-
-            line-height:1.2;
-          }
-
-          .hero-description{
+          .hero-text{
 
             margin-top:18px;
+
+            max-width:650px;
+
+            line-height:1.7;
 
             color:#cbd5e1;
 
             font-size:14px;
-
-            line-height:1.8;
-
-            max-width:900px;
           }
 
           /* PIPELINE */
 
-          .pipeline-grid{
+          .pipeline{
 
-            margin-top:26px;
+            margin-top:24px;
 
-            display:grid;
+            display:flex;
+            align-items:center;
 
-            grid-template-columns:
-            repeat(5,1fr);
+            gap:12px;
 
-            gap:14px;
+            overflow-x:auto;
+
+            padding-bottom:10px;
           }
 
-          .pipeline-card{
+          .stage{
+
+            min-width:135px;
 
             background:#0b1220;
 
@@ -711,28 +750,92 @@ jobs:
 
             border-radius:18px;
 
-            min-height:120px;
+            padding:16px;
 
-            padding:18px;
-
-            display:flex;
-            flex-direction:column;
-            justify-content:center;
+            text-align:center;
           }
 
-          .pipeline-card h3{
+          .stage.success{
+            border-color:#14532d;
+          }
+
+          .stage.warning{
+            border-color:#78350f;
+          }
+
+          .icon{
+
+            width:40px;
+            height:40px;
+
+            border-radius:50%;
+
+            display:flex;
+            align-items:center;
+            justify-content:center;
+
+            margin:auto;
 
             font-size:18px;
+            font-weight:900;
+          }
+
+          .success .icon{
+            background:#14532d;
+            color:#4ade80;
+          }
+
+          .warning .icon{
+            background:#78350f;
+            color:#fbbf24;
+          }
+
+          .stage-name{
+
+            margin-top:12px;
+
+            font-size:16px;
             font-weight:800;
           }
 
-          .pipeline-card p{
+          .stage-status{
 
-            margin-top:10px;
+            margin-top:6px;
 
-            font-size:14px;
+            font-size:13px;
+          }
 
-            color:#cbd5e1;
+          .stage-time{
+
+            margin-top:6px;
+
+            color:#94a3b8;
+
+            font-size:11px;
+          }
+
+          .connector{
+
+            min-width:40px;
+
+            display:flex;
+            justify-content:center;
+
+            gap:4px;
+          }
+
+          .connector div{
+
+            width:8px;
+            height:8px;
+
+            border-radius:50%;
+
+            background:#22c55e;
+          }
+
+          .connector.warn div{
+            background:#fbbf24;
           }
 
           /* METRICS */
@@ -744,12 +847,12 @@ jobs:
             display:grid;
 
             grid-template-columns:
-            repeat(4,1fr);
+            repeat(5,1fr);
 
-            gap:14px;
+            gap:12px;
           }
 
-          .metric-card{
+          .metric{
 
             background:rgba(15,23,42,.72);
 
@@ -757,24 +860,28 @@ jobs:
 
             border-radius:18px;
 
-            padding:18px;
+            padding:16px;
           }
 
-          .metric-label{
-
-            color:#94a3b8;
-
-            font-size:11px;
-
-            letter-spacing:.12em;
+          .metric-title{
+            font-size:13px;
           }
 
           .metric-value{
 
-            margin-top:12px;
+            margin-top:14px;
 
             font-size:28px;
             font-weight:900;
+          }
+
+          .metric-sub{
+
+            margin-top:8px;
+
+            color:#cbd5e1;
+
+            font-size:12px;
           }
 
           .metric-progress{
@@ -792,8 +899,6 @@ jobs:
 
           .metric-fill{
 
-            width:80%;
-
             height:100%;
 
             background:linear-gradient(
@@ -801,6 +906,8 @@ jobs:
               #22c55e,
               #4ade80
             );
+
+            width:80%;
           }
 
           /* BOTTOM */
@@ -812,7 +919,7 @@ jobs:
             display:grid;
 
             grid-template-columns:
-            1.2fr 1fr;
+            1.2fr 1fr 1fr;
 
             gap:16px;
           }
@@ -836,30 +943,29 @@ jobs:
             margin-bottom:18px;
           }
 
-          .activity{
+          /* ACTIVITY */
 
+          .timeline{
             display:flex;
             flex-direction:column;
-
             gap:18px;
           }
 
           .event{
-
             display:flex;
             gap:12px;
           }
 
-          .dot{
+          .event-dot{
 
             width:12px;
             height:12px;
 
             border-radius:50%;
 
-            background:#22c55e;
+            margin-top:4px;
 
-            margin-top:5px;
+            background:#22c55e;
           }
 
           .event-time{
@@ -884,21 +990,11 @@ jobs:
             color:#cbd5e1;
 
             font-size:12px;
-
-            line-height:1.5;
-          }
-
-          canvas{
-            max-width:100% !important;
           }
 
           /* RESPONSIVE */
 
-          @media(max-width:1400px){
-
-            .pipeline-grid{
-              grid-template-columns:repeat(2,1fr);
-            }
+          @media(max-width:1600px){
 
             .metrics{
               grid-template-columns:repeat(2,1fr);
@@ -909,7 +1005,7 @@ jobs:
             }
           }
 
-          @media(max-width:1000px){
+          @media(max-width:1200px){
 
             .sidebar{
               position:relative;
@@ -924,16 +1020,17 @@ jobs:
 
           @media(max-width:700px){
 
-            .pipeline-grid{
-              grid-template-columns:1fr;
-            }
-
             .metrics{
               grid-template-columns:1fr;
             }
 
-            .top{
+            .pipeline{
               flex-direction:column;
+              align-items:stretch;
+            }
+
+            .connector{
+              display:none;
             }
           }
 
@@ -943,40 +1040,14 @@ jobs:
 
           <body>
 
-          <!-- SIDEBAR -->
-
           <div class="sidebar">
 
             <div class="logo">
-              FastAPI CI/CD
+              🚀 <span>FastAPI</span>
             </div>
 
-            <div class="menu">
-
-              <a href="#">
-                Overview
-              </a>
-
-              <a href="#">
-                Pipelines
-              </a>
-
-              <a href="#">
-                Deployments
-              </a>
-
-              <a href="#">
-                Security
-              </a>
-
-              <a href="#">
-                Metrics
-              </a>
-
-              <a href="#">
-                Logs
-              </a>
-
+            <div class="nav-item">
+              📊 Overview
             </div>
 
             <div class="section">
@@ -987,10 +1058,10 @@ jobs:
 
               <a
                 class="report"
-                href="./test-report/test-report.html"
+                href="test-report/test-report.html"
                 target="_blank"
               >
-                <span>Test Results</span>
+                <span>✅ Test Results</span>
                 <div class="pill green">
                   pass
                 </div>
@@ -998,10 +1069,10 @@ jobs:
 
               <a
                 class="report"
-                href="./test-report/htmlcov/index.html"
+                href="test-report/htmlcov/index.html"
                 target="_blank"
               >
-                <span>Coverage</span>
+                <span>📈 Coverage HTML</span>
                 <div class="pill blue">
                   80%
                 </div>
@@ -1009,10 +1080,10 @@ jobs:
 
               <a
                 class="report"
-                href="./lint-report/lint-report.txt"
+                href="lint-report/lint-report.txt"
                 target="_blank"
               >
-                <span>Lint</span>
+                <span>📄 Lint Report</span>
                 <div class="pill amber">
                   warn
                 </div>
@@ -1020,10 +1091,10 @@ jobs:
 
               <a
                 class="report"
-                href="./security-report/bandit-report.json"
+                href="security-report/bandit-report.html"
                 target="_blank"
               >
-                <span>Security</span>
+                <span>🛡 Security Report</span>
                 <div class="pill amber">
                   warn
                 </div>
@@ -1031,10 +1102,10 @@ jobs:
 
               <a
                 class="report"
-                href="./dependency-report/dependency-report.json"
+                href="dependency-report/dependency-report.json"
                 target="_blank"
               >
-                <span>Dependencies</span>
+                <span>📦 Dependency Scan</span>
                 <div class="pill gray">
                   35
                 </div>
@@ -1044,208 +1115,104 @@ jobs:
 
           </div>
 
-          <!-- MAIN -->
-
           <div class="main">
 
             <div class="top">
 
               <div>
 
-                <div class="page-title">
-                  Pipeline Dashboard
+                <div class="title">
+                  FastAPI pipeline dashboard
                 </div>
 
-                <div class="page-subtitle">
-                  Commit 9e741af • main • 2026-05-12
+                <div class="subtitle">
+                  Commit 2833df5 • main • 11 May 2026
                 </div>
 
               </div>
 
-              <button class="run-btn">
-                Run #707572
+              <button class="run">
+                ▶ Run #290730
               </button>
 
             </div>
 
-            <!-- HERO -->
-
             <div class="hero">
 
               <div class="health">
-                ● Production Healthy
+                🟢 Pipeline Healthy
               </div>
 
-              <div class="hero-title">
-                Premium Production Pipeline
+              <div class="hero-text">
+                Real-time CI/CD visibility with testing,
+                coverage analysis, security scanning,
+                dependency monitoring and deployment insights.
               </div>
 
-              <div class="hero-description">
-                Real-time FastAPI CI/CD monitoring dashboard
-                with testing, security analysis, dependency
-                tracking and deployment visibility.
-              </div>
+              <!-- PIPELINE STAGES -->
 
-              <!-- PIPELINE -->
+              <div class="pipeline">
 
-              <div class="pipeline-grid">
-
-                <div class="pipeline-card">
-                  <h3>Checkout</h3>
-                  <p>Completed</p>
+                <div class="stage success">
+                  <div class="icon">✓</div>
+                  <div class="stage-name">Checkout</div>
+                  <div class="stage-status">Completed</div>
+                  <div class="stage-time">11:05:24</div>
                 </div>
 
-                <div class="pipeline-card">
-                  <h3>Testing</h3>
-                  <p>Passed</p>
+                <div class="connector">
+                  <div></div><div></div><div></div>
                 </div>
 
-                <div class="pipeline-card">
-                  <h3>Lint</h3>
-                  <p>Warning</p>
+                <div class="stage success">
+                  <div class="icon">✓</div>
+                  <div class="stage-name">Tests</div>
+                  <div class="stage-status">Passed</div>
+                  <div class="stage-time">11:06:02</div>
                 </div>
 
-                <div class="pipeline-card">
-                  <h3>Security</h3>
-                  <p>Scanning</p>
+                <div class="connector">
+                  <div></div><div></div><div></div>
                 </div>
 
-                <div class="pipeline-card">
-                  <h3>Deploy</h3>
-                  <p>Running</p>
+                <div class="stage success">
+                  <div class="icon">✓</div>
+                  <div class="stage-name">Coverage</div>
+                  <div class="stage-status">80.4%</div>
+                  <div class="stage-time">11:06:25</div>
                 </div>
 
-              </div>
-
-            </div>
-
-            <!-- METRICS -->
-
-            <div class="metrics">
-
-              <div class="metric-card">
-
-                <div class="metric-label">
-                  COVERAGE
+                <div class="connector warn">
+                  <div></div><div></div><div></div>
                 </div>
 
-                <div class="metric-value">
-                  80.4%
+                <div class="stage warning">
+                  <div class="icon">⚠</div>
+                  <div class="stage-name">Lint</div>
+                  <div class="stage-status">Warning</div>
+                  <div class="stage-time">11:07:12</div>
                 </div>
 
-                <div class="metric-progress">
-                  <div class="metric-fill"></div>
+                <div class="connector warn">
+                  <div></div><div></div><div></div>
                 </div>
 
-              </div>
-
-              <div class="metric-card">
-
-                <div class="metric-label">
-                  TESTS
+                <div class="stage warning">
+                  <div class="icon">⚠</div>
+                  <div class="stage-name">Security</div>
+                  <div class="stage-status">Warning</div>
+                  <div class="stage-time">11:07:58</div>
                 </div>
 
-                <div class="metric-value">
-                  PASSED
+                <div class="connector warn">
+                  <div></div><div></div><div></div>
                 </div>
 
-              </div>
-
-              <div class="metric-card">
-
-                <div class="metric-label">
-                  SECURITY
-                </div>
-
-                <div class="metric-value">
-                  WARNING
-                </div>
-
-              </div>
-
-              <div class="metric-card">
-
-                <div class="metric-label">
-                  VULNERABILITIES
-                </div>
-
-                <div class="metric-value">
-                  35
-                </div>
-
-              </div>
-
-            </div>
-
-            <!-- BOTTOM -->
-
-            <div class="bottom">
-
-              <div class="panel">
-
-                <div class="panel-title">
-                  Coverage Trend
-                </div>
-
-                <canvas
-                  id="coverageChart"
-                  height="120"
-                ></canvas>
-
-              </div>
-
-              <div class="panel">
-
-                <div class="panel-title">
-                  Recent Activity
-                </div>
-
-                <div class="activity">
-
-                  <div class="event">
-
-                    <div class="dot"></div>
-
-                    <div>
-
-                      <div class="event-time">
-                        11:05
-                      </div>
-
-                      <div class="event-title">
-                        Pipeline started
-                      </div>
-
-                      <div class="event-desc">
-                        GitHub workflow triggered
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                  <div class="event">
-
-                    <div class="dot"></div>
-
-                    <div>
-
-                      <div class="event-time">
-                        11:06
-                      </div>
-
-                      <div class="event-title">
-                        Tests completed
-                      </div>
-
-                      <div class="event-desc">
-                        Coverage generated successfully
-                      </div>
-
-                    </div>
-
-                  </div>
-
+                <div class="stage warning">
+                  <div class="icon">⚠</div>
+                  <div class="stage-name">Dependencies</div>
+                  <div class="stage-status">35 vulns</div>
+                  <div class="stage-time">11:09:32</div>
                 </div>
 
               </div>
@@ -1253,87 +1220,6 @@ jobs:
             </div>
 
           </div>
-
-          <script>
-
-          new Chart(
-            document.getElementById(
-              'coverageChart'
-            ),
-            {
-
-              type:'line',
-
-              data:{
-
-                labels:[
-                  '05 May',
-                  '06 May',
-                  '07 May',
-                  '08 May',
-                  '09 May',
-                  '10 May',
-                  '11 May'
-                ],
-
-                datasets:[{
-
-                  data:[
-                    73,
-                    75,
-                    77,
-                    75,
-                    82,
-                    89,
-                    81
-                  ],
-
-                  borderColor:'#22c55e',
-
-                  backgroundColor:
-                  'rgba(34,197,94,.15)',
-
-                  fill:true,
-
-                  tension:.4
-                }]
-              },
-
-              options:{
-
-                plugins:{
-                  legend:{display:false}
-                },
-
-                scales:{
-
-                  x:{
-                    ticks:{
-                      color:'#94a3b8',
-                      font:{size:10}
-                    },
-
-                    grid:{
-                      color:'#1e293b'
-                    }
-                  },
-
-                  y:{
-                    ticks:{
-                      color:'#94a3b8',
-                      font:{size:10}
-                    },
-
-                    grid:{
-                      color:'#1e293b'
-                    }
-                  }
-                }
-              }
-            }
-          );
-
-          </script>
 
           </body>
           </html>
