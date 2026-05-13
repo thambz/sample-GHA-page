@@ -1,4 +1,5 @@
 # Complete FastAPI Production CI/CD Pipeline 🚀
+
 # ============================================================
 # FastAPI — Production CI/CD Pipeline
 # Target: Azure Container Registry (ACR)
@@ -285,10 +286,12 @@ jobs:
           <!DOCTYPE html>
           <html lang="en">
           <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>FastAPI CI/CD Dashboard</title>
           <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
           <style>
           *{
             margin:0;
@@ -299,10 +302,10 @@ jobs:
           body{
             background:#0d1117;
             color:#e6edf3;
-            font-family:Inter,Segoe UI,sans-serif;
+            font-family:'Inter',sans-serif;
           }
 
-          .layout{
+          .dashboard{
             display:flex;
             min-height:100vh;
           }
@@ -321,19 +324,29 @@ jobs:
           .logo{
             font-size:24px;
             font-weight:700;
-            margin-bottom:35px;
             color:#58a6ff;
+            margin-bottom:35px;
+          }
+
+          .nav-title{
+            font-size:12px;
+            color:#8b949e;
+            text-transform:uppercase;
+            margin-bottom:14px;
+            letter-spacing:.08em;
           }
 
           .nav-item{
-            padding:14px 16px;
-            border-radius:10px;
-            margin-bottom:10px;
+            display:flex;
+            align-items:center;
+            gap:10px;
             background:#161b22;
             border:1px solid #30363d;
+            border-radius:12px;
+            padding:14px 16px;
+            margin-bottom:12px;
             color:#e6edf3;
             text-decoration:none;
-            display:block;
             transition:.2s;
           }
 
@@ -344,20 +357,20 @@ jobs:
           .main{
             margin-left:240px;
             width:calc(100% - 240px);
-            padding:24px;
+            padding:28px;
           }
 
           .container{
-            max-width:1600px;
+            max-width:1500px;
             margin:auto;
           }
 
           .topbar{
             background:#161b22;
             border:1px solid #30363d;
-            border-radius:18px;
-            padding:24px;
-            margin-bottom:22px;
+            border-radius:20px;
+            padding:28px;
+            margin-bottom:24px;
             display:flex;
             justify-content:space-between;
             align-items:center;
@@ -365,52 +378,52 @@ jobs:
             gap:20px;
           }
 
-          .top-title{
-            font-size:30px;
-            font-weight:700;
+          .top-left h1{
+            font-size:34px;
+            margin-bottom:8px;
           }
 
           .health{
             color:#3fb950;
-            font-size:18px;
             font-weight:600;
+            font-size:16px;
           }
 
-          .meta{
+          .meta-grid{
             display:flex;
-            gap:30px;
+            gap:35px;
             flex-wrap:wrap;
           }
 
           .meta-box small{
-            color:#8b949e;
             display:block;
+            color:#8b949e;
             margin-bottom:4px;
           }
 
           .meta-box strong{
-            font-size:15px;
+            font-size:16px;
           }
 
           .kpi-grid{
             display:grid;
             grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
             gap:18px;
-            margin-bottom:22px;
+            margin-bottom:24px;
           }
 
           .card{
             background:#161b22;
             border:1px solid #30363d;
-            border-radius:18px;
+            border-radius:20px;
             padding:24px;
           }
 
-          .card-title{
+          .card-label{
             color:#8b949e;
-            font-size:13px;
-            margin-bottom:12px;
             text-transform:uppercase;
+            font-size:12px;
+            margin-bottom:12px;
             letter-spacing:.08em;
           }
 
@@ -425,17 +438,17 @@ jobs:
             font-size:14px;
           }
 
-          .main-grid{
+          .grid-2{
             display:grid;
             grid-template-columns:1fr 1fr;
-            gap:22px;
-            margin-bottom:22px;
+            gap:24px;
+            margin-bottom:24px;
           }
 
           .panel{
             background:#161b22;
             border:1px solid #30363d;
-            border-radius:18px;
+            border-radius:20px;
             padding:24px;
           }
 
@@ -445,14 +458,14 @@ jobs:
             margin-bottom:20px;
           }
 
-          .chart-wrap{
-            height:340px;
+          .chart-box{
+            height:320px;
           }
 
-          .activity-panel{
+          .activity{
             background:#161b22;
             border:1px solid #30363d;
-            border-radius:18px;
+            border-radius:20px;
             padding:24px;
           }
 
@@ -460,7 +473,7 @@ jobs:
             display:flex;
             justify-content:space-between;
             align-items:center;
-            padding:14px 0;
+            padding:16px 0;
             border-bottom:1px solid #21262d;
           }
 
@@ -471,18 +484,18 @@ jobs:
           .activity-left{
             display:flex;
             align-items:center;
-            gap:12px;
+            gap:14px;
           }
 
-          .status-dot{
+          .dot{
             width:10px;
             height:10px;
             border-radius:50%;
           }
 
           .green{background:#3fb950;}
-          .yellow{background:#d29922;}
           .blue{background:#58a6ff;}
+          .yellow{background:#d29922;}
 
           .time{
             color:#8b949e;
@@ -490,12 +503,12 @@ jobs:
           }
 
           @media(max-width:1200px){
-            .main-grid{
+            .grid-2{
               grid-template-columns:1fr;
             }
           }
 
-          @media(max-width:768px){
+          @media(max-width:900px){
             .sidebar{
               display:none;
             }
@@ -503,7 +516,7 @@ jobs:
             .main{
               margin-left:0;
               width:100%;
-              padding:14px;
+              padding:18px;
             }
 
             .topbar{
@@ -513,31 +526,36 @@ jobs:
           }
           </style>
           </head>
+
           <body>
 
-          <div class="layout">
+          <div class="dashboard">
 
             <aside class="sidebar">
               <div class="logo">🚀 FastAPI CI/CD</div>
 
-              <a class="nav-item" href="#">Overview</a>
-              <a class="nav-item" href="test-report/test-report.html">Test Report</a>
-              <a class="nav-item" href="test-report/htmlcov/index.html">Coverage Report</a>
-              <a class="nav-item" href="lint-report/lint-report.txt">Lint Report</a>
-              <a class="nav-item" href="security-report/security-report.html">Security Report</a>
-              <a class="nav-item" href="#">GitHub Actions</a>
+              <div class="nav-title">Navigation</div>
+
+              <a href="#" class="nav-item">📊 Overview</a>
+              <a href="test-report/test-report.html" class="nav-item">🧪 Test Report</a>
+              <a href="test-report/htmlcov/index.html" class="nav-item">📈 Coverage Report</a>
+              <a href="lint-report/lint-report.txt" class="nav-item">📝 Lint Report</a>
+              <a href="security-report/security-report.html" class="nav-item">🔒 Security Report</a>
+              <a href="#" class="nav-item">⚡ GitHub Actions</a>
             </aside>
 
             <main class="main">
+
               <div class="container">
 
                 <div class="topbar">
-                  <div>
-                    <div class="top-title">Production Pipeline Dashboard</div>
+
+                  <div class="top-left">
+                    <h1>Production Pipeline Dashboard</h1>
                     <div class="health">● Healthy Pipeline</div>
                   </div>
 
-                  <div class="meta">
+                  <div class="meta-grid">
                     <div class="meta-box">
                       <small>Branch</small>
                       <strong>main</strong>
@@ -553,91 +571,93 @@ jobs:
                       <strong id="runid">145</strong>
                     </div>
                   </div>
+
                 </div>
 
                 <div class="kpi-grid">
 
                   <div class="card">
-                    <div class="card-title">Tests</div>
+                    <div class="card-label">Tests</div>
                     <div class="card-value">Passed</div>
                     <div class="card-sub">28 / 28 successful</div>
                   </div>
 
                   <div class="card">
-                    <div class="card-title">Coverage</div>
+                    <div class="card-label">Coverage</div>
                     <div class="card-value" id="coverage">87%</div>
-                    <div class="card-sub">Current coverage</div>
+                    <div class="card-sub">Current pipeline coverage</div>
                   </div>
 
                   <div class="card">
-                    <div class="card-title">Pipeline Duration</div>
-                    <div class="card-value" id="duration">4m 20s</div>
+                    <div class="card-label">Pipeline Duration</div>
+                    <div class="card-value" id="duration">4m 30s</div>
                     <div class="card-sub">Average runtime</div>
                   </div>
 
                   <div class="card">
-                    <div class="card-title">Deployment</div>
+                    <div class="card-label">Deployment</div>
                     <div class="card-value">Healthy</div>
-                    <div class="card-sub">Production running</div>
+                    <div class="card-sub">Production stable</div>
                   </div>
 
                   <div class="card">
-                    <div class="card-title">Docker Image</div>
+                    <div class="card-label">Docker Image</div>
                     <div class="card-value">latest</div>
-                    <div class="card-sub">Pushed successfully</div>
+                    <div class="card-sub">Successfully pushed</div>
                   </div>
 
                 </div>
 
-                <div class="main-grid">
+                <div class="grid-2">
 
                   <div class="panel">
                     <div class="panel-title">Coverage Trend</div>
-                    <div class="chart-wrap">
+                    <div class="chart-box">
                       <canvas id="coverageChart"></canvas>
                     </div>
                   </div>
 
                   <div class="panel">
                     <div class="panel-title">Pipeline Duration Trend</div>
-                    <div class="chart-wrap">
+                    <div class="chart-box">
                       <canvas id="durationChart"></canvas>
                     </div>
                   </div>
 
                 </div>
 
-                <div class="activity-panel">
+                <div class="activity">
+
                   <div class="panel-title">Recent Activity</div>
 
                   <div class="activity-item">
                     <div class="activity-left">
-                      <div class="status-dot green"></div>
-                      <span>Tests Passed</span>
+                      <div class="dot green"></div>
+                      <span>Tests Passed Successfully</span>
                     </div>
                     <span class="time">2 mins ago</span>
                   </div>
 
                   <div class="activity-item">
                     <div class="activity-left">
-                      <div class="status-dot blue"></div>
-                      <span>Docker Image Pushed</span>
+                      <div class="dot blue"></div>
+                      <span>Docker Image Pushed to ACR</span>
                     </div>
                     <span class="time">4 mins ago</span>
                   </div>
 
                   <div class="activity-item">
                     <div class="activity-left">
-                      <div class="status-dot yellow"></div>
+                      <div class="dot yellow"></div>
                       <span>Lint Warning Found</span>
                     </div>
-                    <span class="time">6 mins ago</span>
+                    <span class="time">7 mins ago</span>
                   </div>
 
                   <div class="activity-item">
                     <div class="activity-left">
-                      <div class="status-dot green"></div>
-                      <span>Deployment Completed</span>
+                      <div class="dot green"></div>
+                      <span>Production Deployment Completed</span>
                     </div>
                     <span class="time">10 mins ago</span>
                   </div>
@@ -645,6 +665,7 @@ jobs:
                 </div>
 
               </div>
+
             </main>
 
           </div>
@@ -653,16 +674,19 @@ jobs:
           fetch('status.json')
           .then(r=>r.json())
           .then(data=>{
+
             document.getElementById('coverage').innerText = data.coverage + '%';
             document.getElementById('commit').innerText = data.commit.slice(0,7);
             document.getElementById('runid').innerText = data.run_id;
 
             const minutes = Math.floor(data.duration / 60);
             const seconds = data.duration % 60;
+
             document.getElementById('duration').innerText = `${minutes}m ${seconds}s`;
+
           });
 
-          new Chart(document.getElementById('coverageChart'),{
+          new Chart(document.getElementById('coverageChart'), {
             type:'line',
             data:{
               labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
@@ -670,24 +694,33 @@ jobs:
                 label:'Coverage %',
                 data:[70,74,78,81,82,85,87],
                 borderColor:'#3fb950',
-                backgroundColor:'rgba(63,185,80,0.1)',
+                backgroundColor:'rgba(63,185,80,0.12)',
                 fill:true,
                 tension:0.4,
-                borderWidth:3
+                borderWidth:3,
+                pointRadius:4
               }]
             },
             options:{
               responsive:true,
               maintainAspectRatio:false,
-              plugins:{legend:{labels:{color:'#e6edf3'}}},
+              plugins:{
+                legend:{labels:{color:'#e6edf3'}}
+              },
               scales:{
-                x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}},
-                y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}
+                x:{
+                  ticks:{color:'#8b949e'},
+                  grid:{color:'#21262d'}
+                },
+                y:{
+                  ticks:{color:'#8b949e'},
+                  grid:{color:'#21262d'}
+                }
               }
             }
           });
 
-          new Chart(document.getElementById('durationChart'),{
+          new Chart(document.getElementById('durationChart'), {
             type:'line',
             data:{
               labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
@@ -695,19 +728,28 @@ jobs:
                 label:'Minutes',
                 data:[8,7,6,5.5,5,4.8,4.5],
                 borderColor:'#58a6ff',
-                backgroundColor:'rgba(88,166,255,0.1)',
+                backgroundColor:'rgba(88,166,255,0.12)',
                 fill:true,
                 tension:0.4,
-                borderWidth:3
+                borderWidth:3,
+                pointRadius:4
               }]
             },
             options:{
               responsive:true,
               maintainAspectRatio:false,
-              plugins:{legend:{labels:{color:'#e6edf3'}}},
+              plugins:{
+                legend:{labels:{color:'#e6edf3'}}
+              },
               scales:{
-                x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}},
-                y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}
+                x:{
+                  ticks:{color:'#8b949e'},
+                  grid:{color:'#21262d'}
+                },
+                y:{
+                  ticks:{color:'#8b949e'},
+                  grid:{color:'#21262d'}
+                }
               }
             }
           });
@@ -762,4 +804,7 @@ jobs:
 
           docker push $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push $REGISTRY/${{ env.IMAGE_NAME }}:latest
+
+```
+
 
