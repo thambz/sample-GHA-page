@@ -297,7 +297,7 @@ jobs:
           if vulns_total > 0:
               print("::warning::" + str(vulns_total) + " vulnerable dependency/dependencies found.")
 
-          sev_color = {"CRITICAL":"#f85149","HIGH":"#d29922","MEDIUM":"#e3b341","LOW":"#388bfd"}
+          sev_color = {"CRITICAL":"#f85149","HIGH":"#fb923c","MEDIUM":"#facc15","LOW":"#60a5fa"}
           rows = ""
           for dep in data.get("dependencies", []):
               for v in dep.get("vulns", []):
@@ -509,9 +509,9 @@ jobs:
                       <canvas id="donut-chart" width="110" height="110" style="flex-shrink:0"></canvas>
                       <div class="vuln-legend">
                         <div class="vl-item"><div class="vl-dot" style="background:#f85149"></div><span class="vl-name">Critical</span><span class="vl-count" id="vc-crit">—</span></div>
-                        <div class="vl-item"><div class="vl-dot" style="background:#d29922"></div><span class="vl-name">High</span><span class="vl-count" id="vc-high">—</span></div>
-                        <div class="vl-item"><div class="vl-dot" style="background:#e3b341"></div><span class="vl-name">Medium</span><span class="vl-count" id="vc-med">—</span></div>
-                        <div class="vl-item"><div class="vl-dot" style="background:#388bfd"></div><span class="vl-name">Low</span><span class="vl-count" id="vc-low">—</span></div>
+                        <div class="vl-item"><div class="vl-dot" style="background:#fb923c"></div><span class="vl-name">High</span><span class="vl-count" id="vc-high">—</span></div>
+                        <div class="vl-item"><div class="vl-dot" style="background:#facc15"></div><span class="vl-name">Medium</span><span class="vl-count" id="vc-med">—</span></div>
+                        <div class="vl-item"><div class="vl-dot" style="background:#60a5fa"></div><span class="vl-name">Low</span><span class="vl-count" id="vc-low">—</span></div>
                       </div>
                     </div>
                     <div class="vuln-total" id="vuln-total">Total: <b>—</b></div>
@@ -532,7 +532,7 @@ jobs:
           function buildActivity(d){const base=new Date(d.timestamp).getTime();const evts=[{dt:0,ok:true,msg:"Pipeline started"},{dt:38000,ok:true,msg:"Tests passed"},{dt:81000,ok:true,msg:"Coverage calculated"},{dt:108000,ok:d.lint==="passed",msg:"Lint check completed"+(d.lint!=="passed"?" (warnings found)":"")},{dt:154000,ok:d.security==="passed",msg:"Security scan completed"+(d.security!=="passed"?" (issues found)":"")},{dt:186000,ok:d.dependency==="passed",msg:"Dependency scan"+(d.vuln_count>0?" ("+d.vuln_count+" vulnerabilities)":"")},{dt:248000,ok:true,msg:"Dashboard generated"}];document.getElementById("activity-list").innerHTML=evts.map(e=>{const t=new Date(base+e.dt).toLocaleTimeString("en-US",{hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"});const ic=e.ok?`<div class="act-icon" style="background:#1a4731"><svg viewBox="0 0 10 10" stroke="#3fb950"><polyline points="1.5,5 3.5,7 8.5,2"/></svg></div>`:`<div class="act-icon" style="background:#3d2b00"><svg viewBox="0 0 10 10" stroke="#d29922"><path d="M5 2l4 7H1z"/><path d="M5 5v1.5M5 8v.2"/></svg></div>`;return`<div class="act-item">${ic}<div><div class="act-time">${t}</div><div class="act-desc">${e.msg}</div></div></div>`;}).join("");}
           function buildCharts(cov){const days=["05 May","06 May","07 May","08 May","09 May","10 May","11 May"];const b=Math.max(60,parseFloat(cov)-7);new Chart(document.getElementById("cov-chart"),{type:"line",data:{labels:days,datasets:[{data:[b,b+1,b+2,b+2.5,b+3,b+3.5,parseFloat(cov)],fill:true,borderColor:"#3fb950",backgroundColor:"rgba(46,160,67,0.10)",borderWidth:2,pointBackgroundColor:"#3fb950",pointRadius:3,tension:0.4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:"#161b22",borderColor:"#30363d",borderWidth:1,titleColor:"#8b949e",bodyColor:"#e6edf3",callbacks:{label:ctx=>" "+ctx.parsed.y.toFixed(1)+"%"}}},scales:{x:{grid:{color:"#21262d"},ticks:{color:"#8b949e",font:{size:10}}},y:{grid:{color:"#21262d"},ticks:{color:"#8b949e",font:{size:10},callback:v=>v+"%"},min:0,max:100}}}});}
           let donutInst=null;
-          function renderDonut(vals,banditTotal,pipTotal){const total=vals.reduce((a,b)=>a+b,0);document.getElementById("vc-crit").textContent=vals[0];document.getElementById("vc-high").textContent=vals[1];document.getElementById("vc-med").textContent=vals[2];document.getElementById("vc-low").textContent=vals[3];document.getElementById("vuln-total").innerHTML="Total: <b>"+total+"</b> vulnerabilities";document.getElementById("vsrc-bandit").textContent="bandit: "+banditTotal;document.getElementById("vsrc-pip").textContent="pip-audit: "+pipTotal;if(donutInst)donutInst.destroy();const hasData=total>0;donutInst=new Chart(document.getElementById("donut-chart"),{type:"doughnut",data:{labels:["Critical","High","Medium","Low"],datasets:[{data:hasData?vals:[1],backgroundColor:hasData?["#f85149","#d29922","#e3b341","#388bfd"]:["#21262d"],borderWidth:0,hoverOffset:4}]},options:{cutout:"65%",plugins:{legend:{display:false},tooltip:{backgroundColor:"#161b22",borderColor:"#30363d",borderWidth:1,bodyColor:"#e6edf3",callbacks:{label:ctx=>hasData?" "+ctx.label+": "+ctx.parsed:""}}},elements:{arc:{borderRadius:hasData?3:0}}}});}
+          function renderDonut(vals,banditTotal,pipTotal){const total=vals.reduce((a,b)=>a+b,0);document.getElementById("vc-crit").textContent=vals[0];document.getElementById("vc-high").textContent=vals[1];document.getElementById("vc-med").textContent=vals[2];document.getElementById("vc-low").textContent=vals[3];document.getElementById("vuln-total").innerHTML="Total: <b>"+total+"</b> vulnerabilities";document.getElementById("vsrc-bandit").textContent="bandit: "+banditTotal;document.getElementById("vsrc-pip").textContent="pip-audit: "+pipTotal;if(donutInst)donutInst.destroy();const hasData=total>0;donutInst=new Chart(document.getElementById("donut-chart"),{type:"doughnut",data:{labels:["Critical","High","Medium","Low"],datasets:[{data:hasData?vals:[1],backgroundColor:hasData?["#f85149","#fb923c","#facc15","#60a5fa"]:["#21262d"],borderWidth:0,hoverOffset:4}]},options:{cutout:"65%",plugins:{legend:{display:false},tooltip:{backgroundColor:"#161b22",borderColor:"#30363d",borderWidth:1,bodyColor:"#e6edf3",callbacks:{label:ctx=>hasData?" "+ctx.label+": "+ctx.parsed:""}}},elements:{arc:{borderRadius:hasData?3:0}}}});}
           function buildVulnChart(vuln_count){
             const banditP=fetch("security-report/bandit-report.json").then(r=>r.json()).catch(()=>null);
             const pipP=fetch("dependency-report/dependency-report.json").then(r=>r.json()).catch(()=>null);
@@ -553,8 +553,8 @@ jobs:
             document.getElementById("run-label").textContent="Run #"+(d.run_id||"000000").slice(-6);
             const repo=window.location.hostname.replace(".github.io","");
             const repoPath=window.location.pathname.split("/")[1]||"";
-            document.getElementById("sb-gh-actions").href="https://github.com/"+repo+"/"+repoPath+"/actions";
-            document.getElementById("sb-run-hist").href="https://github.com/"+repo+"/"+repoPath+"/actions/runs";
+            document.getElementById("sb-gh-actions").href="https://github.com/"+repo+"/"+repoPath+"/actions?query=workflow%3A%22FastAPI+Production+CI%2FCD%22";
+            document.getElementById("sb-run-hist").href="https://github.com/"+repo+"/"+repoPath+"/actions";
             const statuses=[d.tests,d.lint,d.security,d.dependency];
             const anyFail=statuses.some(s=>s==="failed"),allOk=statuses.every(s=>s==="passed");
             const tb=document.getElementById("top-badge");
