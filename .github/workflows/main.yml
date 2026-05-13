@@ -805,6 +805,5 @@ jobs:
           docker push $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push $REGISTRY/${{ env.IMAGE_NAME }}:latest
 
-```
 
 
