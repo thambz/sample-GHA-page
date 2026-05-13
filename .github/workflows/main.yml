@@ -492,7 +492,7 @@ jobs:
               <div class="run-btn"><svg viewBox="0 0 16 16"><path d="M3 2l10 6-10 6V2z"/></svg><span id="run-label">Run #—</span></div>
             </div>
             <div class="page-body">
-              <div class="pipeline-track" id="pt"></div>
+              <div id="sec-banner" style="display:none;background:#2d0f0f;border:1px solid #f85149;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:none"><div style="display:flex;align-items:flex-start;gap:12px"><div style="width:32px;height:32px;border-radius:8px;background:#4a1818;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#f85149" stroke-width="2"><path d="M8 2l5 2v4c0 4-3 5.5-5 6.5C6 13.5 3 12 3 8V4z"/><path d="M8 6v3M8 11v.5" stroke-linecap="round"/></svg></div><div style="flex:1"><p style="font-size:13px;font-weight:600;color:#f85149;margin-bottom:4px">🚨 Critical Security Issues Detected — Pipeline Blocked</p><p style="font-size:12px;color:#e6edf3;margin-bottom:8px" id="banner-desc">—</p><div style="background:#1a0a0a;border-radius:6px;padding:10px 12px;font-size:11px;color:#fca5a5;font-family:monospace;line-height:1.8" id="banner-issues"></div><p style="font-size:11px;color:#8b949e;margin-top:8px">💡 Fix: Use <code style="background:#21262d;padding:1px 5px;border-radius:3px;color:#e6edf3">os.environ.get("SECRET_KEY")</code> instead of hardcoding secrets. Store credentials in GitHub Secrets → pass as env vars.</p></div></div></div><div class="pipeline-track" id="pt"></div>
               <div class="kpi-row">
                 <div class="kcard"><div class="kcard-label">Tests</div><span class="kcard-badge" id="kb-tests" style="background:#1a4731;color:#3fb950">● passed</span></div>
                 <div class="kcard"><div class="kcard-label">Coverage</div><div class="kcard-value" id="kv-cov">—%</div><div class="cov-bar-track"><div class="cov-bar-fill" id="cov-fill" style="width:0%"></div></div></div>
@@ -539,7 +539,7 @@ jobs:
             Promise.all([banditP,pipP]).then(([bandit,pip])=>{
               const counts={CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0};
               let banditTotal=0,pipTotal=0;
-              if(bandit&&bandit.results){bandit.results.forEach(r=>{const sev=(r.issue_severity||"").toUpperCase();if(sev==="CRITICAL"){counts.CRITICAL++;banditTotal++;}else if(sev==="HIGH"){counts.HIGH++;banditTotal++;}else if(sev==="MEDIUM"){counts.MEDIUM++;banditTotal++;}else if(sev==="LOW"){counts.LOW++;banditTotal++;}});}
+              if(bandit&&bandit.results){bandit.results.forEach(r=>{const sev=(r.issue_severity||"").toUpperCase();if(sev==="HIGH"){counts.CRITICAL++;banditTotal++;}else if(sev==="MEDIUM"){counts.HIGH++;banditTotal++;}else if(sev==="LOW"){counts.MEDIUM++;banditTotal++;}});const highIssues=bandit.results.filter(r=>r.issue_severity==="HIGH");if(highIssues.length>0){const types=[...new Set(highIssues.map(r=>r.test_name||r.issue_text||"Unknown issue"))];showSecurityBanner(highIssues.length,types);}}
               if(pip&&pip.dependencies){pip.dependencies.forEach(dep=>{(dep.vulns||[]).forEach(v=>{const sev=(v.severity||"MEDIUM").toUpperCase();if(sev==="CRITICAL"){counts.CRITICAL++;pipTotal++;}else if(sev==="HIGH"){counts.HIGH++;pipTotal++;}else if(sev==="LOW"){counts.LOW++;pipTotal++;}else{counts.MEDIUM++;pipTotal++;}});});}
               if(banditTotal===0&&pipTotal===0&&vuln_count>0){counts.HIGH=vuln_count;pipTotal=vuln_count;}
               renderDonut([counts.CRITICAL,counts.HIGH,counts.MEDIUM,counts.LOW],banditTotal,pipTotal);
@@ -575,7 +575,7 @@ jobs:
             const sbd=document.getElementById("sb-b-dep");if(sbd){const c=C[d.dependency]||C.unknown;sbd.style.background=c.bg;sbd.style.color=c.fg;sbd.textContent=d.vuln_count>0?String(d.vuln_count):"pass";}
             buildPipeline(d);buildActivity(d);buildCharts(d.coverage);buildVulnChart(d.vuln_count);
           }
-          fetch("status.json").then(r=>r.json()).then(render).catch(()=>render({commit:"unknown",branch:"main",run_id:"000000",timestamp:new Date().toISOString(),coverage:0,tests:"unknown",lint:"unknown",security:"unknown",dependency:"unknown",vuln_count:0}));
+          function showSecurityBanner(count,types){const b=document.getElementById("sec-banner");if(!b)return;b.style.display="block";document.getElementById("banner-desc").textContent="Bandit detected "+count+" HIGH severity issue(s) in your code. These are serious vulnerabilities that must be fixed before deployment.";const issueMap={"hardcoded_password_string":"Hardcoded password/secret string detected","hardcoded_password_funcarg":"Hardcoded password in function argument","hardcoded_password_default":"Hardcoded password as default argument","hardcoded_bind_all_interfaces":"Service binding to all network interfaces","request_with_no_cert_validation":"SSL certificate verification disabled"};const items=types.slice(0,5).map(t=>issueMap[t]||t);document.getElementById("banner-issues").innerHTML=items.map(i=>"⚠ "+i).join("<br>");}fetch("status.json").then(r=>r.json()).then(render).catch(()=>render({commit:"unknown",branch:"main",run_id:"000000",timestamp:new Date().toISOString(),coverage:0,tests:"unknown",lint:"unknown",security:"unknown",dependency:"unknown",vuln_count:0}));
           </script>
           </body>
           </html>
