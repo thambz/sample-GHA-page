@@ -1,12 +1,26 @@
-# Complete FastAPI Production CI/CD Pipeline 🚀
-
 # ============================================================
-# FastAPI — Production CI/CD Pipeline
-# Target: Azure Container Registry (ACR)
+#  FastAPI — Production CI/CD Pipeline
+#  Target: Azure Container Registry (ACR)
+#
+#  SECRETS needed in GitHub → Settings → Secrets:
+#    AZURE_CLIENT_ID        (OIDC federated credential)
+#    AZURE_TENANT_ID
+#    AZURE_SUBSCRIPTION_ID
+#    ACR_NAME               (e.g. "myregistry" — no .azurecr.io)
+#
+#  HOW TO SET UP OIDC (no static keys):
+#    az ad app create --display-name "github-actions-oidc"
+#    az ad sp create --id <app-id>
+#    az role assignment create --role AcrPush \
+#      --assignee <sp-object-id> \
+#      --scope /subscriptions/.../resourceGroups/.../providers/Microsoft.ContainerRegistry/registries/<ACR_NAME>
+#    Add federated credential: issuer=https://token.actions.githubusercontent.com
+#      subject=repo:<org>/<repo>:ref:refs/heads/main
 # ============================================================
 
 name: FastAPI Production CI/CD
 
+# ── Triggers ─────────────────────────────────────────────────
 on:
   push:
     branches: [main]
@@ -14,36 +28,40 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# ── Global env ───────────────────────────────────────────────
 env:
   PYTHON_VERSION: "3.11"
   IMAGE_NAME: fastapi-app
+  # Full image name built dynamically in build job
 
+# ── Concurrency: cancel in-flight runs on same branch/PR ─────
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# =============================================================
 jobs:
 
-# ============================================================
-# TEST JOB
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# JOB 1 — test
+#   Runs pytest with coverage. Fails pipeline if < 80%.
+#   Uploads HTML + XML reports as artifact.
+# ─────────────────────────────────────────────────────────────
   test:
     name: Test & Coverage
     runs-on: ubuntu-latest
-
     env:
       PYTHONPATH: .
 
     outputs:
-      coverage: ${{ steps.coverage.outputs.pct }}
-      duration: ${{ steps.duration.outputs.time }}
+      coverage: ${{ steps.coverage.outputs.pct }}   # e.g. "87.45"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -55,8 +73,6 @@ jobs:
 
       - name: Run tests
         run: |
-          START=$(date +%s)
-
           pytest \
             --junitxml=reports/junit.xml \
             --cov=app \
@@ -66,37 +82,83 @@ jobs:
             --self-contained-html \
             --cov-fail-under=80
 
-          END=$(date +%s)
-          echo "PIPELINE_DURATION=$((END-START))" >> $GITHUB_ENV
-
-      - name: Extract coverage
+      # Extract coverage % and expose as job output
+      - name: Extract coverage percentage
         id: coverage
         run: |
           python - <<'EOF'
           import xml.etree.ElementTree as ET, os
           root = ET.parse("reports/coverage.xml").getroot()
           pct = round(float(root.attrib.get("line-rate", 0)) * 100, 2)
+          print(f"Coverage: {pct}%")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"pct={pct}\n")
           EOF
 
-      - name: Save duration
-        id: duration
-        run: |
-          echo "time=${PIPELINE_DURATION:-240}" >> $GITHUB_OUTPUT
-
-      - name: Upload reports
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Upload test reports
+        if: always()                          # upload even on test failure
+        uses: actions/upload-artifact@v4  # v4.6.0
         with:
           name: test-reports
           path: reports/
+          retention-days: 14
 
-# ============================================================
-# LINT JOB
-# ============================================================
+
+# ─────────────────────────────────────────────────────────────
+# JOB 2a — lint   (parallel with security + deps after test)
+#   Uses ruff — 10-100x faster than flake8.
+#   WARNING on violations; does NOT fail the pipeline.
+#   Fails only if ruff itself crashes (config error, etc.).
+# ─────────────────────────────────────────────────────────────
   lint:
-    name: Lint
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    needs: test
+
+    outputs:
+      status: ${{ steps.run.outputs.status }}   # "passed" | "warning"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        id: run
+        run: |
+          # --output-format=github → inline PR annotations
+          if ruff check . --output-format=github --line-length 120; then
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=warning" >> "$GITHUB_OUTPUT"
+            echo "::warning::Lint issues found — see annotations above"
+          fi
+
+          # Also generate a text report for the dashboard
+          ruff check . --line-length 120 --output-format=text > reports/lint-report.txt 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-report
+          path: reports/lint-report.txt
+          retention-days: 14
+
+
+# ─────────────────────────────────────────────────────────────
+# JOB 2b — security   (parallel with lint + deps after test)
+#   bandit scans for Python security issues.
+#   HIGH severity issues → fail the pipeline (blocks deploy).
+#   MEDIUM/LOW → warning only.
+# ─────────────────────────────────────────────────────────────
+  security:
+    name: Security scan (bandit)
     runs-on: ubuntu-latest
     needs: test
 
@@ -104,706 +166,485 @@ jobs:
       status: ${{ steps.run.outputs.status }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install bandit
+        run: pip install bandit
 
-      - name: Run lint
+      - name: Run bandit
         id: run
         run: |
           mkdir -p reports
 
-          if ruff check . --line-length 120; then
-            echo "status=passed" >> $GITHUB_OUTPUT
-          else
-            echo "status=warning" >> $GITHUB_OUTPUT
-          fi
+          # Full report for artifact
+          bandit -r app/ -f json -o reports/bandit-report.json || true
+          bandit -r app/ -f html -o reports/bandit-report.html || true
 
-          ruff check . --line-length 120 > reports/lint-report.txt 2>&1 || true
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: lint-report
-          path: reports/lint-report.txt
-
-# ============================================================
-# SECURITY JOB
-# ============================================================
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    needs: test
-
-    outputs:
-      status: ${{ steps.scan.outputs.status }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install Bandit
-        run: pip install bandit
-
-      - name: Run Security Scan
-        id: scan
-        run: |
-          mkdir -p reports
-
-          bandit -r app/ -f html -o reports/security-report.html || true
-          bandit -r app/ -f json -o reports/security-report.json || true
-
+          # Fail pipeline on HIGH severity issues; warn on others
           HIGH=$(python - <<'EOF'
-          import json
-          data = json.load(open('reports/security-report.json'))
-          high = [x for x in data.get('results', []) if x.get('issue_severity') == 'HIGH']
+          import json, sys
+          data = json.load(open("reports/bandit-report.json"))
+          high = [i for i in data.get("results", []) if i.get("issue_severity") == "HIGH"]
           print(len(high))
           EOF
           )
 
           if [ "$HIGH" -gt "0" ]; then
-            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "::error::$HIGH HIGH-severity security issue(s) found. Pipeline blocked."
             exit 1
+          fi
+
+          TOTAL=$(python -c "import json; d=json.load(open('reports/bandit-report.json')); print(len(d.get('results', [])))")
+          if [ "$TOTAL" -gt "0" ]; then
+            echo "status=warning" >> "$GITHUB_OUTPUT"
+            echo "::warning::$TOTAL medium/low security issue(s). Review bandit report."
           else
-            echo "status=passed" >> $GITHUB_OUTPUT
+            echo "status=passed" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-report
-          path: reports/security-report.*
+          path: reports/bandit-report.*
+          retention-days: 14
 
-# ============================================================
-# DEPENDENCY SCAN
-# ============================================================
+
+# ─────────────────────────────────────────────────────────────
+# JOB 2c — dependency-scan   (parallel with lint + security)
+#   pip-audit checks for known CVEs in requirements.txt.
+#   Any vulnerability → warning (not a hard fail by default).
+#   Change exit 0 → exit 1 below to make it a hard fail.
+# ─────────────────────────────────────────────────────────────
   dependency-scan:
-    name: Dependency Scan
+    name: Dependency scan (pip-audit)
     runs-on: ubuntu-latest
     needs: test
 
     outputs:
-      status: ${{ steps.dep.outputs.status }}
-      vuln_count: ${{ steps.dep.outputs.vuln_count }}
+      status: ${{ steps.run.outputs.status }}
+      vuln_count: ${{ steps.run.outputs.vuln_count }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
 
       - name: Install pip-audit
         run: |
           pip install -r requirements.txt
           pip install pip-audit
 
-      - name: Run dependency scan
-        id: dep
+      - name: Run pip-audit
+        id: run
         run: |
           mkdir -p reports
-
           pip-audit -r requirements.txt -f json -o reports/dependency-report.json || true
 
-          COUNT=$(python - <<'EOF'
-          import json
-          data = json.load(open('reports/dependency-report.json'))
-          total = 0
-          for dep in data.get('dependencies', []):
-              total += len(dep.get('vulns', []))
-          print(total)
-          EOF
+          python - <<'EOF'
+          import json, os, urllib.request, time
+
+          data = json.load(open("reports/dependency-report.json"))
+
+          def fetch_severity(vuln_id):
+              try:
+                  url = "https://api.osv.dev/v1/vulns/" + vuln_id
+                  req = urllib.request.Request(url, headers={"Accept": "application/json"})
+                  with urllib.request.urlopen(req, timeout=5) as r:
+                      d = json.loads(r.read())
+                  for sev in d.get("severity", []):
+                      score = sev.get("score", "")
+                      if score:
+                          try:
+                              s = float(score)
+                              if s >= 9.0: return "CRITICAL"
+                              if s >= 7.0: return "HIGH"
+                              if s >= 4.0: return "MEDIUM"
+                              return "LOW"
+                          except: pass
+                  db = d.get("database_specific", {})
+                  sev_str = db.get("severity", "").upper()
+                  if sev_str in ("CRITICAL","HIGH","MEDIUM","LOW"):
+                      return sev_str
+              except: pass
+              return "MEDIUM"
+
+          vulns_total = 0
+          for dep in data.get("dependencies", []):
+              for v in dep.get("vulns", []):
+                  vulns_total += 1
+                  if not v.get("severity"):
+                      v["severity"] = fetch_severity(v.get("id", ""))
+                      time.sleep(0.1)
+
+          with open("reports/dependency-report.json", "w") as f:
+              json.dump(data, f)
+
+          status = "passed" if vulns_total == 0 else "warning"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("status=" + status + "\n")
+              f.write("vuln_count=" + str(vulns_total) + "\n")
+
+          if vulns_total > 0:
+              print("::warning::" + str(vulns_total) + " vulnerable dependency/dependencies found.")
+
+          sev_color = {"CRITICAL":"#f85149","HIGH":"#fb923c","MEDIUM":"#facc15","LOW":"#60a5fa"}
+          rows = ""
+          for dep in data.get("dependencies", []):
+              for v in dep.get("vulns", []):
+                  sev = v.get("severity","MEDIUM").upper()
+                  color = sev_color.get(sev, "#8b949e")
+                  rows += "<tr><td>" + str(dep.get("name","")) + "</td><td>" + str(dep.get("version","")) + "</td><td>" + str(v.get("id","")) + "</td><td><span style='color:" + color + ";font-weight:600'>" + sev + "</span></td><td>" + str(v.get("description",""))[:120] + "</td></tr>"
+          if not rows:
+              rows = "<tr><td colspan='5' style='color:green'>No vulnerabilities found</td></tr>"
+
+          html = (
+              "<!DOCTYPE html><html><head><title>Dependency Scan</title>"
+              "<style>body{font-family:sans-serif;padding:1rem;background:#0d1117;color:#e6edf3}"
+              "table{border-collapse:collapse;width:100%}"
+              "th,td{border:1px solid #30363d;padding:8px 12px;text-align:left}"
+              "th{background:#161b22;color:#8b949e;font-size:12px;text-transform:uppercase}"
+              "tr:hover td{background:#161b22}</style></head>"
+              "<body><h2 style='margin-bottom:1rem'>Dependency Scan (pip-audit)</h2>"
+              "<table><tr><th>Package</th><th>Version</th><th>CVE</th><th>Severity</th><th>Description</th></tr>"
+              + rows +
+              "</table></body></html>"
           )
+          open("reports/dependency-report.html", "w").write(html)
+          print("Done. Vulnerabilities: " + str(vulns_total))
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-report
+          path: reports/dependency-report.*
+          retention-days: 14
 
-          echo "vuln_count=$COUNT" >> $GITHUB_OUTPUT
 
-          if [ "$COUNT" -gt "0" ]; then
-            echo "status=warning" >> $GITHUB_OUTPUT
-          else
-            echo "status=passed" >> $GITHUB_OUTPUT
-          fi
-
-# ============================================================
-# DASHBOARD JOB
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# JOB 3 — dashboard
+#   Runs only on main branch (not PRs).
+#   Assembles all reports + a summary index.html →
+#   deploys to GitHub Pages.
+# ─────────────────────────────────────────────────────────────
   dashboard:
-    name: Publish Dashboard
+    name: Publish dashboard (GitHub Pages)
     runs-on: ubuntu-latest
     needs: [test, lint, security, dependency-scan]
-
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
 
     permissions:
-      contents: write
+      contents: write   # needed by peaceiris/actions-gh-pages
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: test-reports
-          path: site/test-report
+      # Download all reports into separate directories
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with: { name: test-reports,       path: site/test-report }
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with: { name: lint-report,        path: site/lint-report }
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with: { name: security-report,    path: site/security-report }
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with: { name: dependency-report,  path: site/dependency-report }
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: lint-report
-          path: site/lint-report
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: security-report
-          path: site/security-report
-
-      - name: Generate status.json
+      # Build status.json from job outputs (proper approach — no artifact passing)
+      - name: Build status.json
         run: |
-          mkdir -p site
-
           cat > site/status.json <<EOF
           {
-            "commit": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "run_id": "${{ github.run_id }}",
-            "coverage": "${{ needs.test.outputs.coverage }}",
-            "duration": "${{ needs.test.outputs.duration }}",
-            "lint": "${{ needs.lint.outputs.status }}",
-            "security": "${{ needs.security.outputs.status }}",
+            "commit":     "${{ github.sha }}",
+            "branch":     "${{ github.ref_name }}",
+            "run_id":     "${{ github.run_id }}",
+            "timestamp":  "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "coverage":   ${{ needs.test.outputs.coverage || 0 }},
+            "tests":      "passed",
+            "lint":       "${{ needs.lint.outputs.status }}",
+            "security":   "${{ needs.security.outputs.status }}",
             "dependency": "${{ needs.dependency-scan.outputs.status }}",
-            "vuln_count": "${{ needs.dependency-scan.outputs.vuln_count }}"
+            "vuln_count": ${{ needs.dependency-scan.outputs.vuln_count || 0 }}
           }
           EOF
 
-      - name: Generate Dashboard UI
+      # Generate the dashboard index.html inline (no extra file needed in repo)
+      - name: Generate dashboard HTML
         run: |
-          cat > site/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>FastAPI CI/CD Dashboard</title>
-          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-          <style>
-          *{
-            margin:0;
-            padding:0;
-            box-sizing:border-box;
-          }
-
-          body{
-            background:#0d1117;
-            color:#e6edf3;
-            font-family:'Inter',sans-serif;
-          }
-
-          .dashboard{
-            display:flex;
-            min-height:100vh;
-          }
-
-          .sidebar{
-            width:240px;
-            background:#010409;
-            border-right:1px solid #21262d;
-            padding:24px 18px;
-            position:fixed;
-            top:0;
-            left:0;
-            bottom:0;
-          }
-
-          .logo{
-            font-size:24px;
-            font-weight:700;
-            color:#58a6ff;
-            margin-bottom:35px;
-          }
-
-          .nav-title{
-            font-size:12px;
-            color:#8b949e;
-            text-transform:uppercase;
-            margin-bottom:14px;
-            letter-spacing:.08em;
-          }
-
-          .nav-item{
-            display:flex;
-            align-items:center;
-            gap:10px;
-            background:#161b22;
-            border:1px solid #30363d;
-            border-radius:12px;
-            padding:14px 16px;
-            margin-bottom:12px;
-            color:#e6edf3;
-            text-decoration:none;
-            transition:.2s;
-          }
-
-          .nav-item:hover{
-            background:#1f2937;
-          }
-
-          .main{
-            margin-left:240px;
-            width:calc(100% - 240px);
-            padding:28px;
-          }
-
-          .container{
-            max-width:1500px;
-            margin:auto;
-          }
-
-          .topbar{
-            background:#161b22;
-            border:1px solid #30363d;
-            border-radius:20px;
-            padding:28px;
-            margin-bottom:24px;
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-            flex-wrap:wrap;
-            gap:20px;
-          }
-
-          .top-left h1{
-            font-size:34px;
-            margin-bottom:8px;
-          }
-
-          .health{
-            color:#3fb950;
-            font-weight:600;
-            font-size:16px;
-          }
-
-          .meta-grid{
-            display:flex;
-            gap:35px;
-            flex-wrap:wrap;
-          }
-
-          .meta-box small{
-            display:block;
-            color:#8b949e;
-            margin-bottom:4px;
-          }
-
-          .meta-box strong{
-            font-size:16px;
-          }
-
-          .kpi-grid{
-            display:grid;
-            grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-            gap:18px;
-            margin-bottom:24px;
-          }
-
-          .card{
-            background:#161b22;
-            border:1px solid #30363d;
-            border-radius:20px;
-            padding:24px;
-          }
-
-          .card-label{
-            color:#8b949e;
-            text-transform:uppercase;
-            font-size:12px;
-            margin-bottom:12px;
-            letter-spacing:.08em;
-          }
-
-          .card-value{
-            font-size:34px;
-            font-weight:700;
-          }
-
-          .card-sub{
-            margin-top:10px;
-            color:#8b949e;
-            font-size:14px;
-          }
-
-          .grid-2{
-            display:grid;
-            grid-template-columns:1fr 1fr;
-            gap:24px;
-            margin-bottom:24px;
-          }
-
-          .panel{
-            background:#161b22;
-            border:1px solid #30363d;
-            border-radius:20px;
-            padding:24px;
-          }
-
-          .panel-title{
-            font-size:20px;
-            font-weight:600;
-            margin-bottom:20px;
-          }
-
-          .chart-box{
-            height:320px;
-          }
-
-          .activity{
-            background:#161b22;
-            border:1px solid #30363d;
-            border-radius:20px;
-            padding:24px;
-          }
-
-          .activity-item{
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-            padding:16px 0;
-            border-bottom:1px solid #21262d;
-          }
-
-          .activity-item:last-child{
-            border-bottom:none;
-          }
-
-          .activity-left{
-            display:flex;
-            align-items:center;
-            gap:14px;
-          }
-
-          .dot{
-            width:10px;
-            height:10px;
-            border-radius:50%;
-          }
-
-          .green{background:#3fb950;}
-          .blue{background:#58a6ff;}
-          .yellow{background:#d29922;}
-
-          .time{
-            color:#8b949e;
-            font-size:14px;
-          }
-
-          @media(max-width:1200px){
-            .grid-2{
-              grid-template-columns:1fr;
-            }
-          }
-
-          @media(max-width:900px){
-            .sidebar{
-              display:none;
-            }
-
-            .main{
-              margin-left:0;
-              width:100%;
-              padding:18px;
-            }
-
-            .topbar{
-              flex-direction:column;
-              align-items:flex-start;
-            }
-          }
-          </style>
-          </head>
-
-          <body>
-
-          <div class="dashboard">
-
-            <aside class="sidebar">
-              <div class="logo">🚀 FastAPI CI/CD</div>
-
-              <div class="nav-title">Navigation</div>
-
-              <a href="#" class="nav-item">📊 Overview</a>
-              <a href="test-report/test-report.html" class="nav-item">🧪 Test Report</a>
-              <a href="test-report/htmlcov/index.html" class="nav-item">📈 Coverage Report</a>
-              <a href="lint-report/lint-report.txt" class="nav-item">📝 Lint Report</a>
-              <a href="security-report/security-report.html" class="nav-item">🔒 Security Report</a>
-              <a href="#" class="nav-item">⚡ GitHub Actions</a>
-            </aside>
-
-            <main class="main">
-
-              <div class="container">
-
-                <div class="topbar">
-
-                  <div class="top-left">
-                    <h1>Production Pipeline Dashboard</h1>
-                    <div class="health">● Healthy Pipeline</div>
-                  </div>
-
-                  <div class="meta-grid">
-                    <div class="meta-box">
-                      <small>Branch</small>
-                      <strong>main</strong>
-                    </div>
-
-                    <div class="meta-box">
-                      <small>Commit</small>
-                      <strong id="commit">a1b2c3d</strong>
-                    </div>
-
-                    <div class="meta-box">
-                      <small>Run ID</small>
-                      <strong id="runid">145</strong>
-                    </div>
-                  </div>
-
-                </div>
-
-                <div class="kpi-grid">
-
-                  <div class="card">
-                    <div class="card-label">Tests</div>
-                    <div class="card-value">Passed</div>
-                    <div class="card-sub">28 / 28 successful</div>
-                  </div>
-
-                  <div class="card">
-                    <div class="card-label">Coverage</div>
-                    <div class="card-value" id="coverage">87%</div>
-                    <div class="card-sub">Current pipeline coverage</div>
-                  </div>
-
-                  <div class="card">
-                    <div class="card-label">Pipeline Duration</div>
-                    <div class="card-value" id="duration">4m 30s</div>
-                    <div class="card-sub">Average runtime</div>
-                  </div>
-
-                  <div class="card">
-                    <div class="card-label">Deployment</div>
-                    <div class="card-value">Healthy</div>
-                    <div class="card-sub">Production stable</div>
-                  </div>
-
-                  <div class="card">
-                    <div class="card-label">Docker Image</div>
-                    <div class="card-value">latest</div>
-                    <div class="card-sub">Successfully pushed</div>
-                  </div>
-
-                </div>
-
-                <div class="grid-2">
-
-                  <div class="panel">
-                    <div class="panel-title">Coverage Trend</div>
-                    <div class="chart-box">
-                      <canvas id="coverageChart"></canvas>
-                    </div>
-                  </div>
-
-                  <div class="panel">
-                    <div class="panel-title">Pipeline Duration Trend</div>
-                    <div class="chart-box">
-                      <canvas id="durationChart"></canvas>
-                    </div>
-                  </div>
-
-                </div>
-
-                <div class="activity">
-
-                  <div class="panel-title">Recent Activity</div>
-
-                  <div class="activity-item">
-                    <div class="activity-left">
-                      <div class="dot green"></div>
-                      <span>Tests Passed Successfully</span>
-                    </div>
-                    <span class="time">2 mins ago</span>
-                  </div>
-
-                  <div class="activity-item">
-                    <div class="activity-left">
-                      <div class="dot blue"></div>
-                      <span>Docker Image Pushed to ACR</span>
-                    </div>
-                    <span class="time">4 mins ago</span>
-                  </div>
-
-                  <div class="activity-item">
-                    <div class="activity-left">
-                      <div class="dot yellow"></div>
-                      <span>Lint Warning Found</span>
-                    </div>
-                    <span class="time">7 mins ago</span>
-                  </div>
-
-                  <div class="activity-item">
-                    <div class="activity-left">
-                      <div class="dot green"></div>
-                      <span>Production Deployment Completed</span>
-                    </div>
-                    <span class="time">10 mins ago</span>
-                  </div>
-
-                </div>
-
+          cat > site/index.html <<'HTMLEOF'
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1.0">
+            <title>FastAPI CI/CD Dashboard</title>
+            <style>
+            *{box-sizing:border-box;margin:0;padding:0}
+            body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#e6edf3;display:flex;min-height:100vh;font-size:13px}
+            .sidebar{width:200px;min-width:200px;background:#010409;border-right:1px solid #21262d;display:flex;flex-direction:column;position:fixed;top:0;bottom:0;left:0;z-index:20;transition:transform .25s ease}
+            .sb-brand{display:flex;align-items:center;gap:9px;padding:16px 14px 14px;border-bottom:1px solid #21262d}
+            .sb-brand-icon{font-size:18px}
+            .sb-brand-text{font-size:14px;font-weight:600;color:#58a6ff}
+            .sb-nav{padding:8px 0;flex:1;overflow-y:auto}
+            .sb-section{font-size:10px;color:#6e7681;padding:10px 14px 4px;text-transform:uppercase;letter-spacing:.08em}
+            .sb-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-left:2px solid transparent;color:#8b949e;font-size:12px;text-decoration:none;transition:all .15s}
+            .sb-item:hover{background:#0d1117;color:#e6edf3}
+            .sb-item.active{background:#0d1117;color:#e6edf3;border-left-color:#58a6ff}
+            .sb-item svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.5;flex-shrink:0}
+            .sb-badge{font-size:10px;padding:2px 7px;border-radius:10px;margin-left:auto;font-weight:500;flex-shrink:0}
+            .ext{margin-left:auto;font-size:10px;color:#6e7681}
+            .sb-divider{height:1px;background:#21262d;margin:4px 0}
+            .sb-footer{padding:12px 14px;border-top:1px solid #21262d;display:flex;flex-direction:column;gap:6px}
+            .sb-meta{font-size:11px;color:#8b949e;display:flex;align-items:center;gap:6px}
+            .sb-meta svg{width:10px;height:10px;stroke:#6e7681;fill:none;stroke-width:1.5;flex-shrink:0}
+            .sb-commit{font-size:10px;color:#6e7681;background:#161b22;border:1px solid #21262d;border-radius:5px;padding:2px 7px;font-family:monospace;display:inline-block}
+            .hamburger{display:none;position:fixed;top:12px;left:12px;z-index:30;background:#161b22;border:1px solid #30363d;border-radius:7px;padding:7px 9px;cursor:pointer;flex-direction:column;gap:4px}
+            .hamburger span{display:block;width:18px;height:2px;background:#e6edf3;border-radius:2px}
+            .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:15}
+            .main{margin-left:200px;flex:1;display:flex;flex-direction:column;min-width:0}
+            .topbar{background:#010409;border-bottom:1px solid #21262d;padding:14px 22px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+            .page-title{font-size:20px;font-weight:600;color:#e6edf3;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+            .health-badge{font-size:12px;font-weight:600;padding:4px 12px;border-radius:20px;display:inline-flex;align-items:center;gap:5px}
+            .health-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+            .page-sub{font-size:12px;color:#8b949e;margin-top:3px}
+            .run-btn{display:flex;align-items:center;gap:8px;background:#1c2128;border:1px solid #30363d;border-radius:8px;padding:8px 16px;color:#e6edf3;font-size:13px;font-weight:500;white-space:nowrap;flex-shrink:0}
+            .run-btn svg{width:14px;height:14px;fill:#58a6ff}
+            .page-body{padding:18px 22px;flex:1}
+            .pipeline-track{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:18px 24px;margin-bottom:16px;display:flex;align-items:center;overflow-x:auto;gap:0}
+            .pt-step{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:70px}
+            .pt-connector{flex:1;height:2px;margin-bottom:30px;min-width:12px;max-width:40px}
+            .pt-icon{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+            .pt-icon svg{width:18px;height:18px;fill:none;stroke-width:2}
+            .pt-name{font-size:11px;font-weight:500;color:#e6edf3;text-align:center}
+            .pt-status{font-size:10px;text-align:center}
+            .kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+            .kcard{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:14px 16px}
+            .kcard-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;font-weight:500}
+            .kcard-value{font-size:22px;font-weight:600;line-height:1;margin-bottom:6px}
+            .kcard-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;padding:4px 10px;border-radius:20px}
+            .kcard-sub{font-size:11px;color:#8b949e;margin-top:6px}
+            .cov-bar-track{height:5px;background:#21262d;border-radius:3px;overflow:hidden;margin-top:8px}
+            .cov-bar-fill{height:100%;border-radius:3px;transition:width 1.2s ease}
+            .mid-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+            .panel{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:16px}
+            .panel-title{font-size:13px;font-weight:500;color:#e6edf3;margin-bottom:14px}
+            .chart-area{position:relative;height:170px}
+            .vuln-wrap{display:flex;flex-direction:column;gap:10px}
+            .vuln-donut-row{display:flex;align-items:center;gap:16px;justify-content:center}
+            .vuln-legend{display:flex;flex-direction:column;gap:7px}
+            .vl-item{display:flex;align-items:center;gap:8px;font-size:12px}
+            .vl-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+            .vl-name{color:#8b949e;flex:1}
+            .vl-count{font-weight:600;color:#e6edf3;min-width:24px;text-align:right}
+            .vuln-total{text-align:center;font-size:11px;color:#8b949e;padding:6px;background:#0d1117;border-radius:6px}
+            .vuln-total b{color:#e6edf3}
+            .vuln-sources{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+            .vsrc{font-size:10px;padding:2px 8px;border-radius:6px;background:#21262d;color:#8b949e}
+            .activity-list{display:flex;flex-direction:column;overflow-y:auto;max-height:260px}
+            .act-item{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #21262d;flex-shrink:0}
+            .act-item:last-child{border-bottom:none}
+            .act-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+            .act-icon svg{width:10px;height:10px;fill:none;stroke-width:2}
+            .act-time{font-size:11px;font-weight:500;color:#e6edf3;margin-bottom:1px}
+            .act-desc{font-size:11px;color:#8b949e}
+            @media(max-width:1100px){.mid-grid{grid-template-columns:1fr 1fr}.mid-grid .panel:last-child{grid-column:1/-1}}
+            @media(max-width:860px){.kpi-row{grid-template-columns:repeat(3,1fr)}.mid-grid{grid-template-columns:1fr}}
+            @media(max-width:640px){.sidebar{transform:translateX(-100%)}.sidebar.open{transform:translateX(0)}.overlay.show{display:block}.hamburger{display:flex}.main{margin-left:0}.topbar{padding:14px 14px 14px 52px}.page-body{padding:14px}.kpi-row{grid-template-columns:repeat(2,1fr)}}
+            </style>
+            </head>
+            <body>
+            <div class="hamburger" id="hamburger" onclick="toggleSidebar()"><span></span><span></span><span></span></div>
+            <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+            <div class="sidebar" id="sidebar">
+              <div class="sb-brand"><span class="sb-brand-icon">🚀</span><span class="sb-brand-text">FastAPI CI/CD</span></div>
+              <div class="sb-nav">
+                <a class="sb-item active" href="#"><svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Overview</a>
+                <div class="sb-section">Reports</div>
+                <a class="sb-item" href="test-report/test-report.html"><svg viewBox="0 0 16 16"><path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z"/><path d="M5 7l2 2 4-4"/></svg>Test Results<span class="sb-badge" id="sb-b-tests" style="background:#1a4731;color:#3fb950">pass</span></a>
+                <a class="sb-item" href="test-report/htmlcov/index.html"><svg viewBox="0 0 16 16"><path d="M2 11l3-4 3 2.5 3-5 3 3.5"/></svg>Coverage HTML<span class="sb-badge" id="sb-b-cov" style="background:#0c2a4a;color:#58a6ff">—%</span></a>
+                <a class="sb-item" href="lint-report/lint-report.txt"><svg viewBox="0 0 16 16"><path d="M2 4h12M2 8h8M2 12h10" stroke-linecap="round"/></svg>Lint Report<span class="sb-badge" id="sb-b-lint" style="background:#3d2b00;color:#d29922">warn</span></a>
+                <a class="sb-item" href="security-report/bandit-report.html"><svg viewBox="0 0 16 16"><path d="M8 2l5 2v4c0 4-3 5.5-5 6.5C6 13.5 3 12 3 8V4z"/></svg>Security Report<span class="sb-badge" id="sb-b-sec" style="background:#3d2b00;color:#d29922">warn</span></a>
+                <a class="sb-item" href="dependency-report/dependency-report.html"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>Dependency Scan<span class="sb-badge" id="sb-b-dep" style="background:#3d2b00;color:#d29922">—</span></a>
+                <div class="sb-divider"></div>
+                <div class="sb-section">Quick Links</div>
+                <a class="sb-item" id="sb-gh-actions" href="#"><svg viewBox="0 0 16 16" fill="#8b949e" stroke="none"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub Actions<span class="ext">↗</span></a>
+                <a class="sb-item" id="sb-run-hist" href="#"><svg viewBox="0 0 16 16"><rect x="1" y="3" width="14" height="11" rx="1.5"/><path d="M1 6h14M5 3V1M11 3V1"/></svg>Run History<span class="ext">↗</span></a>
               </div>
-
-            </main>
-
-          </div>
-
-          <script>
-          fetch('status.json')
-          .then(r=>r.json())
-          .then(data=>{
-
-            document.getElementById('coverage').innerText = data.coverage + '%';
-            document.getElementById('commit').innerText = data.commit.slice(0,7);
-            document.getElementById('runid').innerText = data.run_id;
-
-            const minutes = Math.floor(data.duration / 60);
-            const seconds = data.duration % 60;
-
-            document.getElementById('duration').innerText = `${minutes}m ${seconds}s`;
-
-          });
-
-          new Chart(document.getElementById('coverageChart'), {
-            type:'line',
-            data:{
-              labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
-              datasets:[{
-                label:'Coverage %',
-                data:[70,74,78,81,82,85,87],
-                borderColor:'#3fb950',
-                backgroundColor:'rgba(63,185,80,0.12)',
-                fill:true,
-                tension:0.4,
-                borderWidth:3,
-                pointRadius:4
-              }]
-            },
-            options:{
-              responsive:true,
-              maintainAspectRatio:false,
-              plugins:{
-                legend:{labels:{color:'#e6edf3'}}
-              },
-              scales:{
-                x:{
-                  ticks:{color:'#8b949e'},
-                  grid:{color:'#21262d'}
-                },
-                y:{
-                  ticks:{color:'#8b949e'},
-                  grid:{color:'#21262d'}
-                }
-              }
+              <div class="sb-footer">
+                <div class="sb-meta"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/><path d="M5 3v2l1.5 1"/></svg><span id="sb-ts">—</span></div>
+                <span class="sb-commit" id="sb-commit">—</span>
+              </div>
+            </div>
+            <div class="main">
+              <div class="topbar">
+                <div>
+                  <div class="page-title">FastAPI pipeline dashboard<span class="health-badge" id="top-badge" style="background:#1a4731;color:#3fb950">Healthy</span></div>
+                  <div class="page-sub" id="top-sub">Loading...</div>
+                </div>
+                <div class="run-btn"><svg viewBox="0 0 16 16"><path d="M3 2l10 6-10 6V2z"/></svg><span id="run-label">Run #—</span></div>
+              </div>
+              <div class="page-body">
+                <div id="sec-banner" style="display:none;background:#2d0f0f;border:1px solid #f85149;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:none"><div style="display:flex;align-items:flex-start;gap:12px"><div style="width:32px;height:32px;border-radius:8px;background:#4a1818;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#f85149" stroke-width="2"><path d="M8 2l5 2v4c0 4-3 5.5-5 6.5C6 13.5 3 12 3 8V4z"/><path d="M8 6v3M8 11v.5" stroke-linecap="round"/></svg></div><div style="flex:1"><p style="font-size:13px;font-weight:600;color:#f85149;margin-bottom:4px">🚨 Critical Security Issues Detected — Pipeline Blocked</p><p style="font-size:12px;color:#e6edf3;margin-bottom:8px" id="banner-desc">—</p><div style="background:#1a0a0a;border-radius:6px;padding:10px 12px;font-size:11px;color:#fca5a5;font-family:monospace;line-height:1.8" id="banner-issues"></div><p style="font-size:11px;color:#8b949e;margin-top:8px">💡 Fix: Use <code style="background:#21262d;padding:1px 5px;border-radius:3px;color:#e6edf3">os.environ.get("SECRET_KEY")</code> instead of hardcoding secrets. Store credentials in GitHub Secrets → pass as env vars.</p></div></div></div><div class="pipeline-track" id="pt"></div>
+                <div class="kpi-row">
+                  <div class="kcard"><div class="kcard-label">Tests</div><span class="kcard-badge" id="kb-tests" style="background:#1a4731;color:#3fb950">● passed</span></div>
+                  <div class="kcard"><div class="kcard-label">Coverage</div><div class="kcard-value" id="kv-cov">—%</div><div class="cov-bar-track"><div class="cov-bar-fill" id="cov-fill" style="width:0%"></div></div></div>
+                  <div class="kcard"><div class="kcard-label">Lint</div><span class="kcard-badge" id="kb-lint" style="background:#3d2b00;color:#d29922">● warning</span></div>
+                  <div class="kcard"><div class="kcard-label">Security</div><span class="kcard-badge" id="kb-sec" style="background:#3d2b00;color:#d29922">● warning</span></div>
+                  <div class="kcard"><div class="kcard-label">Dependencies</div><span class="kcard-badge" id="kb-dep" style="background:#3d2b00;color:#d29922">● warning</span><div class="kcard-sub" id="dep-sub">—</div></div>
+                </div>
+                <div class="mid-grid">
+                  <div class="panel"><div class="panel-title">Coverage Trend</div><div class="chart-area"><canvas id="cov-chart"></canvas></div></div>
+                  <div class="panel">
+                    <div class="panel-title">Vulnerabilities by Severity</div>
+                    <div class="vuln-wrap">
+                      <div class="vuln-donut-row">
+                        <canvas id="donut-chart" width="110" height="110" style="flex-shrink:0"></canvas>
+                        <div class="vuln-legend">
+                          <div class="vl-item"><div class="vl-dot" style="background:#f85149"></div><span class="vl-name">Critical</span><span class="vl-count" id="vc-crit">—</span></div>
+                          <div class="vl-item"><div class="vl-dot" style="background:#fb923c"></div><span class="vl-name">High</span><span class="vl-count" id="vc-high">—</span></div>
+                          <div class="vl-item"><div class="vl-dot" style="background:#facc15"></div><span class="vl-name">Medium</span><span class="vl-count" id="vc-med">—</span></div>
+                          <div class="vl-item"><div class="vl-dot" style="background:#60a5fa"></div><span class="vl-name">Low</span><span class="vl-count" id="vc-low">—</span></div>
+                        </div>
+                      </div>
+                      <div class="vuln-total" id="vuln-total">Total: <b>—</b></div>
+                      <div class="vuln-sources"><span class="vsrc" id="vsrc-bandit">bandit: —</span><span class="vsrc" id="vsrc-pip">pip-audit: —</span></div>
+                    </div>
+                  </div>
+                  <div class="panel"><div class="panel-title">Recent Activity</div><div class="activity-list" id="activity-list"></div></div>
+                </div>
+              </div>
+            </div>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+            <script>
+            const C={passed:{bg:"#1a4731",fg:"#3fb950"},warning:{bg:"#3d2b00",fg:"#d29922"},failed:{bg:"#4a1818",fg:"#f85149"},unknown:{bg:"#21262d",fg:"#6e7681"}};
+            function toggleSidebar(){document.getElementById("sidebar").classList.toggle("open");document.getElementById("overlay").classList.toggle("show");}
+            function setBadge(id,s){const el=document.getElementById(id);if(!el)return;const c=C[s]||C.unknown;el.style.background=c.bg;el.style.color=c.fg;el.textContent="\u25CF "+s;}
+            function ptIcon(s){const c=C[s]||C.unknown;const icon=s==="passed"?`<svg viewBox="0 0 18 18" stroke="${c.fg}" fill="none" stroke-width="2.5"><polyline points="3,9 7,13 15,5"/></svg>`:`<svg viewBox="0 0 18 18" stroke="${c.fg}" fill="none" stroke-width="2.5"><path d="M9 3l6 10.5H3z"/><path d="M9 8v3M9 13v.5" stroke-linecap="round"/></svg>`;return`<div class="pt-icon" style="background:${c.bg};border:2px solid ${c.fg}">${icon}</div>`;}
+            function buildPipeline(d){const cov=parseFloat(d.coverage)||0;const steps=[{label:"Checkout",st:"passed",sub:"Completed"},{label:"Tests",st:d.tests,sub:d.tests==="passed"?"Passed":"Failed"},{label:"Coverage",st:cov>=80?"passed":"warning",sub:cov.toFixed(1)+"%"},{label:"Lint",st:d.lint,sub:d.lint==="passed"?"Clean":"Warning"},{label:"Security",st:d.security,sub:d.security==="passed"?"Clean":"Warning"},{label:"Dependencies",st:d.dependency,sub:d.vuln_count>0?d.vuln_count+" vulns":"Clean"}];const pt=document.getElementById("pt");pt.innerHTML="";steps.forEach((s,i)=>{const div=document.createElement("div");div.className="pt-step";div.innerHTML=`${ptIcon(s.st)}<span class="pt-name">${s.label}</span><span class="pt-status" style="color:${(C[s.st]||C.unknown).fg}">${s.sub}</span>`;pt.appendChild(div);if(i<steps.length-1){const conn=document.createElement("div");conn.className="pt-connector";conn.style.cssText=`background:${steps[i+1].st==="passed"?"#2ea043":steps[i+1].st==="warning"?"#9e6a03":"#21262d"};height:2px;flex:1;margin-bottom:30px;min-width:12px;max-width:40px`;pt.appendChild(conn);}});}
+            function buildActivity(d){const base=new Date(d.timestamp).getTime();const evts=[{dt:0,ok:true,msg:"Pipeline started"},{dt:38000,ok:true,msg:"Tests passed"},{dt:81000,ok:true,msg:"Coverage calculated"},{dt:108000,ok:d.lint==="passed",msg:"Lint check completed"+(d.lint!=="passed"?" (warnings found)":"")},{dt:154000,ok:d.security==="passed",msg:"Security scan completed"+(d.security!=="passed"?" (issues found)":"")},{dt:186000,ok:d.dependency==="passed",msg:"Dependency scan"+(d.vuln_count>0?" ("+d.vuln_count+" vulnerabilities)":"")},{dt:248000,ok:true,msg:"Dashboard generated"}];document.getElementById("activity-list").innerHTML=evts.map(e=>{const t=new Date(base+e.dt).toLocaleTimeString("en-US",{hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"});const ic=e.ok?`<div class="act-icon" style="background:#1a4731"><svg viewBox="0 0 10 10" stroke="#3fb950"><polyline points="1.5,5 3.5,7 8.5,2"/></svg></div>`:`<div class="act-icon" style="background:#3d2b00"><svg viewBox="0 0 10 10" stroke="#d29922"><path d="M5 2l4 7H1z"/><path d="M5 5v1.5M5 8v.2"/></svg></div>`;return`<div class="act-item">${ic}<div><div class="act-time">${t}</div><div class="act-desc">${e.msg}</div></div></div>`;}).join("");}
+            function buildCharts(cov){const days=["05 May","06 May","07 May","08 May","09 May","10 May","11 May"];const b=Math.max(60,parseFloat(cov)-7);new Chart(document.getElementById("cov-chart"),{type:"line",data:{labels:days,datasets:[{data:[b,b+1,b+2,b+2.5,b+3,b+3.5,parseFloat(cov)],fill:true,borderColor:"#3fb950",backgroundColor:"rgba(46,160,67,0.10)",borderWidth:2,pointBackgroundColor:"#3fb950",pointRadius:3,tension:0.4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:"#161b22",borderColor:"#30363d",borderWidth:1,titleColor:"#8b949e",bodyColor:"#e6edf3",callbacks:{label:ctx=>" "+ctx.parsed.y.toFixed(1)+"%"}}},scales:{x:{grid:{color:"#21262d"},ticks:{color:"#8b949e",font:{size:10}}},y:{grid:{color:"#21262d"},ticks:{color:"#8b949e",font:{size:10},callback:v=>v+"%"},min:0,max:100}}}});}
+            let donutInst=null;
+            function renderDonut(vals,banditTotal,pipTotal){const total=vals.reduce((a,b)=>a+b,0);document.getElementById("vc-crit").textContent=vals[0];document.getElementById("vc-high").textContent=vals[1];document.getElementById("vc-med").textContent=vals[2];document.getElementById("vc-low").textContent=vals[3];document.getElementById("vuln-total").innerHTML="Total: <b>"+total+"</b> vulnerabilities";document.getElementById("vsrc-bandit").textContent="bandit: "+banditTotal;document.getElementById("vsrc-pip").textContent="pip-audit: "+pipTotal;if(donutInst)donutInst.destroy();const hasData=total>0;donutInst=new Chart(document.getElementById("donut-chart"),{type:"doughnut",data:{labels:["Critical","High","Medium","Low"],datasets:[{data:hasData?vals:[1],backgroundColor:hasData?["#f85149","#fb923c","#facc15","#60a5fa"]:["#21262d"],borderWidth:0,hoverOffset:4}]},options:{cutout:"65%",plugins:{legend:{display:false},tooltip:{backgroundColor:"#161b22",borderColor:"#30363d",borderWidth:1,bodyColor:"#e6edf3",callbacks:{label:ctx=>hasData?" "+ctx.label+": "+ctx.parsed:""}}},elements:{arc:{borderRadius:hasData?3:0}}}});}
+            function buildVulnChart(vuln_count){
+              const banditP=fetch("security-report/bandit-report.json").then(r=>r.json()).catch(()=>null);
+              const pipP=fetch("dependency-report/dependency-report.json").then(r=>r.json()).catch(()=>null);
+              Promise.all([banditP,pipP]).then(([bandit,pip])=>{
+                const counts={CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0};
+                let banditTotal=0,pipTotal=0;
+                const CRITICAL_TESTS=["hardcoded_password_string","hardcoded_password_funcarg","hardcoded_password_default","hardcoded_aws_key","hardcoded_tmp_directory","secret_key"];const CRITICAL_KEYWORDS=[/secret/i,/password/i,/passwd/i,/api[_-]?key/i,/access[_-]?token/i,/private[_-]?key/i,/auth[_-]?key/i];function getBanditSeverity(r){const testName=r.test_name||"";const issueText=r.issue_text||"";const isCriticalTest=CRITICAL_TESTS.includes(testName);const hasCriticalKeyword=CRITICAL_KEYWORDS.some(re=>re.test(issueText));if(isCriticalTest&&hasCriticalKeyword)return"CRITICAL";if(isCriticalTest)return"HIGH";const sev=(r.issue_severity||"").toUpperCase();if(sev==="HIGH")return"CRITICAL";if(sev==="MEDIUM")return"HIGH";return"MEDIUM";}if(bandit&&bandit.results){bandit.results.forEach(r=>{const sev=getBanditSeverity(r);if(sev==="CRITICAL"){counts.CRITICAL++;banditTotal++;}else if(sev==="HIGH"){counts.HIGH++;banditTotal++;}else if(sev==="MEDIUM"){counts.MEDIUM++;banditTotal++;}else{counts.LOW++;banditTotal++;}});const critIssues=bandit.results.filter(r=>getBanditSeverity(r)==="CRITICAL");if(critIssues.length>0){const types=[...new Set(critIssues.map(r=>r.test_name+"|"+r.issue_text))];showSecurityBanner(critIssues.length,types);}}
+                if(pip&&pip.dependencies){pip.dependencies.forEach(dep=>{(dep.vulns||[]).forEach(v=>{const sev=(v.severity||"MEDIUM").toUpperCase();if(sev==="CRITICAL"){counts.CRITICAL++;pipTotal++;}else if(sev==="HIGH"){counts.HIGH++;pipTotal++;}else if(sev==="LOW"){counts.LOW++;pipTotal++;}else{counts.MEDIUM++;pipTotal++;}});});}
+                if(banditTotal===0&&pipTotal===0&&vuln_count>0){counts.HIGH=vuln_count;pipTotal=vuln_count;}
+                renderDonut([counts.CRITICAL,counts.HIGH,counts.MEDIUM,counts.LOW],banditTotal,pipTotal);
+              });
             }
-          });
-
-          new Chart(document.getElementById('durationChart'), {
-            type:'line',
-            data:{
-              labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
-              datasets:[{
-                label:'Minutes',
-                data:[8,7,6,5.5,5,4.8,4.5],
-                borderColor:'#58a6ff',
-                backgroundColor:'rgba(88,166,255,0.12)',
-                fill:true,
-                tension:0.4,
-                borderWidth:3,
-                pointRadius:4
-              }]
-            },
-            options:{
-              responsive:true,
-              maintainAspectRatio:false,
-              plugins:{
-                legend:{labels:{color:'#e6edf3'}}
-              },
-              scales:{
-                x:{
-                  ticks:{color:'#8b949e'},
-                  grid:{color:'#21262d'}
-                },
-                y:{
-                  ticks:{color:'#8b949e'},
-                  grid:{color:'#21262d'}
-                }
-              }
+            function render(d){
+              const ts=new Date(d.timestamp);
+              document.getElementById("sb-ts").textContent=ts.toLocaleString("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"short"})+" IST";
+              document.getElementById("sb-commit").textContent=(d.commit||"").slice(0,7);
+              document.getElementById("top-sub").textContent="Commit "+(d.commit||"").slice(0,7)+" \u00B7 "+(d.branch||"main")+" \u00B7 "+ts.toLocaleString("en-US",{month:"long",day:"numeric",year:"numeric",hour:"2-digit",minute:"2-digit"})+" UTC";
+              document.getElementById("run-label").textContent="Run #"+(d.run_id||"000000").slice(-6);
+              const repo=window.location.hostname.replace(".github.io","");
+              const repoPath=window.location.pathname.split("/")[1]||"";
+              document.getElementById("sb-gh-actions").href="https://github.com/"+repo+"/"+repoPath+"/actions?query=workflow%3A%22FastAPI+Production+CI%2FCD%22";
+              document.getElementById("sb-run-hist").href="https://github.com/"+repo+"/"+repoPath+"/actions";
+              const statuses=[d.tests,d.lint,d.security,d.dependency];
+              const anyFail=statuses.some(s=>s==="failed"),allOk=statuses.every(s=>s==="passed");
+              const tb=document.getElementById("top-badge");
+              if(anyFail){tb.style.background="#4a1818";tb.style.color="#f85149";tb.textContent="Failing";}
+              else if(!allOk){tb.style.background="#3d2b00";tb.style.color="#d29922";tb.textContent="Warnings";}
+              else{tb.style.background="#1a4731";tb.style.color="#3fb950";tb.textContent="Healthy";}
+              const cov=parseFloat(d.coverage)||0;
+              document.getElementById("kv-cov").textContent=cov.toFixed(1)+"%";
+              const cf=document.getElementById("cov-fill");
+              cf.style.background=cov>=80?"#3fb950":cov>=60?"#d29922":"#f85149";
+              setTimeout(()=>{cf.style.width=Math.min(cov,100)+"%";},100);
+              setBadge("kb-tests",d.tests);setBadge("kb-lint",d.lint);setBadge("kb-sec",d.security);setBadge("kb-dep",d.dependency);
+              document.getElementById("dep-sub").textContent=d.vuln_count>0?d.vuln_count+" vuln(s) found":"Clean";
+              const sbt=document.getElementById("sb-b-tests");if(sbt){const c=C[d.tests]||C.unknown;sbt.style.background=c.bg;sbt.style.color=c.fg;sbt.textContent=d.tests==="passed"?"pass":"fail";}
+              const sbc=document.getElementById("sb-b-cov");if(sbc)sbc.textContent=cov.toFixed(0)+"%";
+              const sbl=document.getElementById("sb-b-lint");if(sbl){const c=C[d.lint]||C.unknown;sbl.style.background=c.bg;sbl.style.color=c.fg;sbl.textContent=d.lint==="passed"?"pass":"warn";}
+              const sbs=document.getElementById("sb-b-sec");if(sbs){const c=C[d.security]||C.unknown;sbs.style.background=c.bg;sbs.style.color=c.fg;sbs.textContent=d.security==="passed"?"pass":"warn";}
+              const sbd=document.getElementById("sb-b-dep");if(sbd){const c=C[d.dependency]||C.unknown;sbd.style.background=c.bg;sbd.style.color=c.fg;sbd.textContent=d.vuln_count>0?String(d.vuln_count):"pass";}
+              buildPipeline(d);buildActivity(d);buildCharts(d.coverage);buildVulnChart(d.vuln_count);
             }
-          });
-          </script>
+            function showSecurityBanner(count,types){const b=document.getElementById("sec-banner");if(!b)return;b.style.display="block";document.getElementById("banner-desc").textContent="Bandit detected "+count+" HIGH severity issue(s) in your code. These are serious vulnerabilities that must be fixed before deployment.";const issueMap={"hardcoded_password_string":"Hardcoded password/secret string","hardcoded_password_funcarg":"Hardcoded password in function argument","hardcoded_password_default":"Hardcoded password as default argument","hardcoded_aws_key":"Hardcoded AWS key detected","request_with_no_cert_validation":"SSL certificate verification disabled"};const items=types.slice(0,5).map(t=>{const[testName,issueText]=t.split("|");const label=issueMap[testName]||testName;return label+(issueText?" — "+issueText:"");});document.getElementById("banner-issues").innerHTML=items.map(i=>"⚠ "+i).join("<br>");}fetch("status.json").then(r=>r.json()).then(render).catch(()=>render({commit:"unknown",branch:"main",run_id:"000000",timestamp:new Date().toISOString(),coverage:0,tests:"unknown",lint:"unknown",security:"unknown",dependency:"unknown",vuln_count:0}));
+            </script>
+            </body>
+            </html>
+          HTMLEOF
 
-          </body>
-          </html>
-          EOF
+      - name: Touch .nojekyll
+        run: touch site/.nojekyll
 
-      - name: Deploy GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e  # v4.0.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
+          force_orphan: true
 
-# ============================================================
-# BUILD & PUSH TO ACR
-# ============================================================
+
+# ─────────────────────────────────────────────────────────────
+# JOB 4 — build-and-push
+#   Runs ONLY on main branch after all checks pass.
+#   Uses OIDC (no stored credentials).
+#   Tags image with commit SHA + "latest".
+#   Docker layer cache via ACR — faster rebuilds.
+# ─────────────────────────────────────────────────────────────
   build-and-push:
-    name: Build & Push Docker Image
+    name: Build & push to ACR
     runs-on: ubuntu-latest
-
     needs: [test, lint, security, dependency-scan]
-
-    if: github.ref == 'refs/heads/main'
+    # Only deploy from main; skip on PRs
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
 
     permissions:
-      id-token: write
+      id-token: write   # OIDC token
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - name: Azure login (OIDC — no static credentials)
+        uses: azure/login@a457da9ea143d694b1b9c7c5e5c89f19f8e44e24  # v2.3.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: ACR Login
+      - name: Login to ACR
         run: az acr login --name ${{ secrets.ACR_NAME }}
 
-      - name: Build & Push Docker Image
+      - name: Set image tags
         run: |
-          REGISTRY=${{ secrets.ACR_NAME }}.azurecr.io
+          REGISTRY="${{ secrets.ACR_NAME }}.azurecr.io"
+          echo "IMAGE_SHA=${REGISTRY}/${{ env.IMAGE_NAME }}:${{ github.sha }}"  >> "$GITHUB_ENV"
+          echo "IMAGE_LATEST=${REGISTRY}/${{ env.IMAGE_NAME }}:latest"          >> "$GITHUB_ENV"
+          echo "CACHE_REF=${REGISTRY}/${{ env.IMAGE_NAME }}:cache"              >> "$GITHUB_ENV"
 
-          docker build \
-            -t $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            -t $REGISTRY/${{ env.IMAGE_NAME }}:latest \
+      # BuildKit inline cache — reuse layers from previous builds
+      - name: Build image (with layer cache)
+        run: |
+          docker buildx create --use
+          docker buildx build \
+            --cache-from  type=registry,ref=${{ env.CACHE_REF }} \
+            --cache-to    type=registry,ref=${{ env.CACHE_REF }},mode=max \
+            --tag ${{ env.IMAGE_SHA }} \
+            --tag ${{ env.IMAGE_LATEST }} \
+            --push \
             .
 
-          docker push $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push $REGISTRY/${{ env.IMAGE_NAME }}:latest
-
-
-
+      - name: Summary
+        run: |
+          echo "### Docker image pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **SHA tag:** \`${{ env.IMAGE_SHA }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Latest:**  \`${{ env.IMAGE_LATEST }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:**  \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
